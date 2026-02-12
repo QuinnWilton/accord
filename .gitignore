@@ -22,3 +22,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 accord-*.tar
 
+# Dialyzer PLT files.
+/priv/plts/
+

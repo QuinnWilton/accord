@@ -12,7 +12,9 @@ defmodule Accord.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       dialyzer: [
-        plt_add_apps: [:ex_unit, :mix]
+        plt_add_apps: [:ex_unit, :mix],
+        plt_local_path: "priv/plts/project.plt",
+        plt_core_path: "priv/plts/core.plt"
       ],
 
       # Hex
