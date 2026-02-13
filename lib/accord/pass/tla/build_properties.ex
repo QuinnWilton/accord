@@ -55,7 +55,7 @@ defmodule Accord.Pass.TLA.BuildProperties do
   end
 
   defp build_property(prop_name, %{kind: :local_invariant} = check, _ir) do
-    tla_name = camelize(prop_name)
+    tla_name = camelize(prop_name) <> camelize(check.spec.state)
     state = Atom.to_string(check.spec.state)
 
     body =
@@ -88,10 +88,12 @@ defmodule Accord.Pass.TLA.BuildProperties do
       |> Enum.map(fn t -> Atom.to_string(t.name) end)
       |> Enum.join(", ")
 
+    bindings = extract_action_bindings(check.spec.ast)
+
     body =
       case check.spec do
         %{ast: ast} when not is_nil(ast) ->
-          case GuardCompiler.compile(ast) do
+          case GuardCompiler.compile(ast, bindings) do
             {:ok, expr} -> expr
             {:partial, expr, _} -> expr
           end
@@ -151,7 +153,7 @@ defmodule Accord.Pass.TLA.BuildProperties do
 
     %Property{
       name: tla_name,
-      kind: :auxiliary,
+      kind: :invariant,
       formula: formula,
       comment: "correspondence: #{prop_name}"
     }
@@ -199,6 +201,23 @@ defmodule Accord.Pass.TLA.BuildProperties do
 
   defp pred_to_tla({:in_state, state}), do: ~s(state = "#{state}")
   defp pred_to_tla(other), do: inspect(other)
+
+  # Extracts bindings for action property fn params.
+  # Maps the "old" param to :current and the "new" param to :primed.
+  defp extract_action_bindings({:fn, _, [{:->, _, [[old_var, new_var], _body]}]}) do
+    old_name = extract_var_name(old_var)
+    new_name = extract_var_name(new_var)
+
+    bindings = %{}
+    bindings = if old_name, do: Map.put(bindings, old_name, :current), else: bindings
+    bindings = if new_name, do: Map.put(bindings, new_name, :primed), else: bindings
+    bindings
+  end
+
+  defp extract_action_bindings(_), do: %{}
+
+  defp extract_var_name({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: name
+  defp extract_var_name(_), do: nil
 
   defp camelize(name) when is_atom(name) do
     name

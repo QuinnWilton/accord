@@ -94,9 +94,14 @@ defmodule Accord.TLA.GuardCompiler do
     {Atom.to_string(key), warnings}
   end
 
-  defp do_compile({{:., _meta1, [{_var, _meta2, _ctx}, field]}, _meta3, []}, _bindings, warnings)
+  defp do_compile({{:., _meta1, [{var, _meta2, _ctx}, field]}, _meta3, []}, bindings, warnings)
        when is_atom(field) do
-    {Atom.to_string(field), warnings}
+    field_str = Atom.to_string(field)
+
+    case Map.get(bindings, var) do
+      :primed -> {"#{field_str}'", warnings}
+      _ -> {field_str, warnings}
+    end
   end
 
   # -- Comparison operators --

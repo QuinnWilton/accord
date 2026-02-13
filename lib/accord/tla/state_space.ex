@@ -12,13 +12,21 @@ defmodule Accord.TLA.StateSpace do
           init: String.t()
         }
 
+  @type correspondence :: %{
+          open: atom(),
+          close: [atom()],
+          counter_var: String.t()
+        }
+
   @type t :: %__MODULE__{
           module_name: String.t(),
           variables: [variable()],
           type_invariant: String.t(),
           init: String.t(),
           states: [String.t()],
-          has_event_var: boolean()
+          has_event_var: boolean(),
+          correspondences: [correspondence()],
+          constants: [String.t()]
         }
 
   @enforce_keys [:module_name, :variables, :type_invariant, :init, :states]
@@ -28,6 +36,8 @@ defmodule Accord.TLA.StateSpace do
     :type_invariant,
     :init,
     :states,
-    has_event_var: false
+    has_event_var: false,
+    correspondences: [],
+    constants: []
   ]
 end

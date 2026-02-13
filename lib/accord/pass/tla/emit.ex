@@ -22,10 +22,17 @@ defmodule Accord.Pass.TLA.Emit do
     var_names = Enum.map(ss.variables, & &1.name)
     vars_decl = Enum.join(var_names, ", ")
 
+    constants_decl =
+      case ss.constants do
+        [] -> []
+        names -> ["CONSTANTS #{Enum.join(names, ", ")}", ""]
+      end
+
     sections = [
       "---- MODULE #{ss.module_name} ----",
       "EXTENDS Integers, Sequences, TLC",
-      "",
+      ""
+    ] ++ constants_decl ++ [
       "VARIABLES #{vars_decl}",
       "",
       "vars == <<#{vars_decl}>>",
@@ -161,12 +168,11 @@ defmodule Accord.Pass.TLA.Emit do
       |> Enum.filter(&(&1.kind == :temporal))
       |> Enum.map(&"PROPERTY #{&1.name}")
 
-    # Add constants for NULL if any track has nil default.
+    # Add constant declarations for model values and NULL.
     constants =
-      if Enum.any?(ss.variables, &(&1.init == "NULL")) do
-        ["", "CONSTANT NULL = NULL"]
-      else
-        []
+      case ss.constants do
+        [] -> []
+        names -> ["" | Enum.map(names, &"CONSTANT #{&1} = #{&1}")]
       end
 
     all_sections = sections ++ invariants ++ temporals ++ constants

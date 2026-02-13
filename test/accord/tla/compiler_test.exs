@@ -24,7 +24,19 @@ defmodule Accord.TLA.CompilerTest do
               message_pattern: {:acquire, :_},
               message_types: [:term],
               kind: :call,
-              branches: [%Branch{reply_type: {:tagged, :ok, :pos_integer}, next_state: :locked}],
+              branches: [
+                %Branch{
+                  reply_type: {:tagged, :ok, :pos_integer},
+                  next_state: :locked,
+                  constraint: %{
+                    fun: fn {:ok, token}, tracks -> token > tracks.fence_token end,
+                    ast:
+                      quote(
+                        do: fn {:ok, token}, tracks -> token > tracks.fence_token end
+                      )
+                  }
+                }
+              ],
               update: %{
                 fun: fn {:acquire, cid}, {:ok, token}, tracks ->
                   %{tracks | holder: cid, fence_token: token}
@@ -153,11 +165,11 @@ defmodule Accord.TLA.CompilerTest do
       assert ft_var.init == "0"
     end
 
-    test "holder variable uses model values" do
+    test "holder variable uses model values with NULL" do
       {:ok, ss} = BuildStateSpace.run(lock_ir(), lock_config())
       holder_var = Enum.find(ss.variables, &(&1.name == "holder"))
 
-      assert holder_var.type == "{c1, c2}"
+      assert holder_var.type == "{c1, c2} \\union {NULL}"
       assert holder_var.init == "NULL"
     end
 
@@ -244,6 +256,12 @@ defmodule Accord.TLA.CompilerTest do
       assert Enum.any?(var_names, &String.contains?(&1, "msg_"))
     end
 
+    test "acquire has constraint precondition from where clause", %{actions: actions} do
+      acquire = Enum.find(actions, &(&1.message_tag == "acquire"))
+
+      assert Enum.any?(acquire.preconditions, &(&1 =~ "reply_token > fence_token"))
+    end
+
     test "UNCHANGED includes non-modified variables", %{actions: actions} do
       pings = Enum.filter(actions, &(&1.message_tag == "ping"))
 
@@ -273,7 +291,7 @@ defmodule Accord.TLA.CompilerTest do
       action = Enum.find(props, &(&1.name == "MonotonicTokens"))
       assert action
       assert action.kind == :temporal
-      assert action.formula =~ "fence_token >= fence_token"
+      assert action.formula =~ "fence_token' >= fence_token"
     end
 
     test "bounded property" do

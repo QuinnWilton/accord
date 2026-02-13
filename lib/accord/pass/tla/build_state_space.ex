@@ -26,10 +26,19 @@ defmodule Accord.Pass.TLA.BuildStateSpace do
     track_vars =
       Enum.map(ir.tracks, fn track ->
         domain = ModelConfig.resolve_domain(config, track.name, track.type)
+        type_str = ModelConfig.domain_to_tla(domain)
+
+        # Include NULL in the type set when the track can be nil.
+        type_str =
+          if track.default == nil do
+            "#{type_str} \\union {NULL}"
+          else
+            type_str
+          end
 
         %{
           name: Atom.to_string(track.name),
-          type: ModelConfig.domain_to_tla(domain),
+          type: type_str,
           init: value_to_tla(track.default)
         }
       end)
@@ -41,7 +50,15 @@ defmodule Accord.Pass.TLA.BuildStateSpace do
         []
       end
 
-    variables = [state_var] ++ track_vars ++ event_var
+    # Build correspondence counter variables.
+    correspondences = build_correspondences(ir)
+
+    correspondence_vars =
+      Enum.map(correspondences, fn corr ->
+        %{name: corr.counter_var, type: "0..3", init: "0"}
+      end)
+
+    variables = [state_var] ++ track_vars ++ event_var ++ correspondence_vars
 
     # Build TypeInvariant.
     type_invariant = build_type_invariant(variables)
@@ -55,13 +72,18 @@ defmodule Accord.Pass.TLA.BuildStateSpace do
       |> Module.split()
       |> List.last()
 
+    # Collect model value constants needed for the cfg.
+    constants = collect_constants(ir, config)
+
     state_space = %StateSpace{
       module_name: module_name,
       variables: variables,
       type_invariant: type_invariant,
       init: init,
       states: states,
-      has_event_var: has_local_inv
+      has_event_var: has_local_inv,
+      correspondences: correspondences,
+      constants: constants
     }
 
     {:ok, state_space}
@@ -103,6 +125,82 @@ defmodule Accord.Pass.TLA.BuildStateSpace do
   defp has_local_invariants?(%IR{properties: properties}) do
     Enum.any?(properties, fn prop ->
       Enum.any?(prop.checks, fn check -> check.kind == :local_invariant end)
+    end)
+  end
+
+  # Collects all model value constant names from resolved domains.
+  # Includes NULL if any variable has a nil default.
+  defp collect_constants(%IR{} = ir, %ModelConfig{} = config) do
+    # Gather all domains: track domains + message type domains.
+    track_domains =
+      Enum.map(ir.tracks, fn track ->
+        ModelConfig.resolve_domain(config, track.name, track.type)
+      end)
+
+    msg_type_domains =
+      ir.states
+      |> Enum.flat_map(fn {_name, state} ->
+        state.transitions ++ if(state.terminal, do: [], else: ir.anystate)
+      end)
+      |> Enum.flat_map(fn transition ->
+        Enum.map(transition.message_types, fn type ->
+          ModelConfig.resolve_domain(config, :_, type)
+        end)
+      end)
+
+    # Also include reply type domains for transitions with branches.
+    reply_type_domains =
+      ir.states
+      |> Enum.flat_map(fn {_name, state} -> state.transitions end)
+      |> Enum.flat_map(fn transition ->
+        Enum.flat_map(transition.branches, fn branch ->
+          extract_reply_types(branch.reply_type)
+          |> Enum.map(fn type -> ModelConfig.resolve_domain(config, :_, type) end)
+        end)
+      end)
+
+    all_domains = track_domains ++ msg_type_domains ++ reply_type_domains
+
+    model_value_names =
+      all_domains
+      |> Enum.flat_map(&extract_model_value_names/1)
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    # Add NULL if any track defaults to nil.
+    has_null = Enum.any?(ir.tracks, &(&1.default == nil))
+
+    if has_null do
+      Enum.uniq(["NULL" | model_value_names])
+    else
+      model_value_names
+    end
+  end
+
+  defp extract_model_value_names({:model_values, count}) when is_integer(count) do
+    Enum.map(1..count, &"mv#{&1}")
+  end
+
+  defp extract_model_value_names({:model_values, names}) when is_list(names) do
+    Enum.map(names, &Atom.to_string/1)
+  end
+
+  defp extract_model_value_names(_), do: []
+
+  defp extract_reply_types({:tagged, _tag, inner}), do: [inner]
+  defp extract_reply_types(_), do: []
+
+  defp build_correspondences(%IR{properties: properties}) do
+    properties
+    |> Enum.flat_map(fn prop ->
+      prop.checks
+      |> Enum.filter(&(&1.kind == :correspondence))
+      |> Enum.map(fn check ->
+        open = check.spec.open
+        close = check.spec.close
+        counter_var = "#{open}_pending"
+        %{open: open, close: close, counter_var: counter_var}
+      end)
     end)
   end
 end
