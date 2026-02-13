@@ -64,19 +64,39 @@ defmodule Accord.Pass.TLA.BuildActions do
         [build_cast_action(ir, state_name, transition, tag, source, state_space, all_var_names)]
 
       branches ->
-        Enum.map(branches, fn branch ->
-          build_call_action(
-            ir,
-            state_name,
-            transition,
-            branch,
-            tag,
-            source,
-            state_space,
-            config,
-            all_var_names
-          )
-        end)
+        # Count branches per target to detect action name collisions.
+        target_counts =
+          branches
+          |> Enum.map(fn b -> resolve_next_state(b.next_state, state_name) end)
+          |> Enum.frequencies()
+
+        {actions, _seen} =
+          Enum.map_reduce(branches, %{}, fn branch, seen ->
+            target_state = resolve_next_state(branch.next_state, state_name)
+            idx = Map.get(seen, target_state, 0)
+            seen = Map.put(seen, target_state, idx + 1)
+
+            suffix =
+              if Map.fetch!(target_counts, target_state) > 1, do: idx, else: nil
+
+            action =
+              build_call_action(
+                ir,
+                state_name,
+                transition,
+                branch,
+                tag,
+                source,
+                state_space,
+                config,
+                all_var_names,
+                suffix
+              )
+
+            {action, seen}
+          end)
+
+        actions
     end
   end
 
@@ -89,12 +109,13 @@ defmodule Accord.Pass.TLA.BuildActions do
          source,
          state_space,
          config,
-         all_var_names
+         all_var_names,
+         suffix
        ) do
     target_state = resolve_next_state(branch.next_state, state_name)
     target = Atom.to_string(target_state)
 
-    action_name = build_action_name(tag, source, target)
+    action_name = build_action_name(tag, source, target, suffix)
 
     # Build existential variables for message parameters.
     {existential_vars, param_bindings} =
@@ -580,8 +601,12 @@ defmodule Accord.Pass.TLA.BuildActions do
     end)
   end
 
-  defp build_action_name(tag, source, target) do
+  defp build_action_name(tag, source, target, nil) do
     "#{camelize(tag)}From#{camelize(source)}To#{camelize(target)}"
+  end
+
+  defp build_action_name(tag, source, target, index) do
+    "#{camelize(tag)}From#{camelize(source)}To#{camelize(target)}#{index}"
   end
 
   defp resolve_next_state(:__same__, current), do: current
