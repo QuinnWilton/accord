@@ -37,6 +37,7 @@ defmodule Accord.TLA.ViolationReport do
       |> add_trace_labels(violation, protocol_mod, opts)
       |> add_trace_notes(violation)
       |> add_type_invariant_hint(violation, protocol_mod)
+      |> add_deadlock_hint(violation, protocol_mod)
 
     render(report, protocol_mod)
   end
@@ -296,6 +297,112 @@ defmodule Accord.TLA.ViolationReport do
         "or bound exploration with a state constraint — `state_constraint: \"#{var_name} =< N\"`"
       )
     end)
+  end
+
+  # -- Deadlock Diagnosis --
+
+  # When TLC reports a deadlock, inspect the protocol IR to explain why
+  # no transitions are enabled in the final state.
+  defp add_deadlock_hint(report, %{kind: :deadlock} = violation, mod) do
+    with ir when not is_nil(ir) <- fetch_ir(mod),
+         state_atom when is_atom(state_atom) <- parse_last_state(violation) do
+      add_deadlock_diagnosis(report, ir, state_atom, violation, mod)
+    else
+      _ -> report
+    end
+  end
+
+  defp add_deadlock_hint(report, _violation, _mod), do: report
+
+  defp add_deadlock_diagnosis(report, ir, state_atom, violation, mod) do
+    state = Map.get(ir.states, state_atom)
+    anystate_transitions = ir.anystate
+
+    cond do
+      # State exists with no transitions and no anystate transitions.
+      state != nil and state.transitions == [] and anystate_transitions == [] ->
+        report
+        |> Report.with_note(
+          "state :#{state_atom} has no outgoing transitions but is not marked terminal"
+        )
+        |> Report.with_help("mark :#{state_atom} as terminal, or add transitions from it")
+
+      # State has transitions — check for domain boundary exhaustion.
+      state != nil and state.transitions != [] ->
+        add_boundary_hints(report, violation, mod, state_atom)
+
+      # Anystate transitions exist but no state-specific ones.
+      state != nil and anystate_transitions != [] ->
+        add_boundary_hints(report, violation, mod, state_atom)
+
+      # Fallback.
+      true ->
+        report
+        |> Report.with_note("state :#{state_atom} is not terminal but no transitions are enabled")
+        |> Report.with_help("check that transition guards can be satisfied")
+    end
+  end
+
+  defp add_boundary_hints(report, violation, mod, state_atom) do
+    domains = fetch_domains(mod)
+    last_assignments = last_trace_assignments(violation)
+
+    boundary_vars =
+      Enum.flat_map(last_assignments, fn {var_name, value_str} ->
+        with domain_str when is_binary(domain_str) <- Map.get(domains, var_name),
+             {lo, hi} <- parse_range_domain(domain_str),
+             value when is_integer(value) <- parse_tla_integer(value_str),
+             true <- value == lo or value == hi do
+          [{var_name, value, lo, hi}]
+        else
+          _ -> []
+        end
+      end)
+
+    case boundary_vars do
+      [] ->
+        report
+        |> Report.with_note("state :#{state_atom} is not terminal but no transitions are enabled")
+        |> Report.with_help("check that transition guards can be satisfied")
+
+      _ ->
+        Enum.reduce(boundary_vars, report, fn {var_name, value, lo, hi}, acc ->
+          boundary = if value == hi, do: "maximum", else: "minimum"
+
+          acc
+          |> Report.with_note(
+            "variable '#{var_name}' is at #{boundary} of its domain #{lo}..#{hi}" <>
+              " — transitions from :#{state_atom} requiring values beyond this boundary cannot fire"
+          )
+          |> Report.with_help("widen the domain for '#{var_name}'")
+        end)
+    end
+  end
+
+  defp fetch_ir(mod) do
+    if function_exported?(mod, :__ir__, 0) do
+      mod.__ir__()
+    else
+      nil
+    end
+  end
+
+  # Extract the state name from the last trace entry's "state" assignment.
+  defp parse_last_state(%{trace: [_ | _] = trace}) do
+    case List.last(trace).assignments do
+      %{"state" => value} -> parse_tla_string(value)
+      _ -> nil
+    end
+  end
+
+  defp parse_last_state(_), do: nil
+
+  # Strip TLA+ string quotes: "\"foo\"" → :foo.
+  defp parse_tla_string(str) do
+    case Regex.run(~r/^"(.+)"$/, str) do
+      [_, inner] -> String.to_atom(inner)
+      _ -> nil
+    end
   end
 
   # Parse "N..M" range domains. Returns nil for non-range domains (sets, STRING, etc.).

@@ -6,16 +6,31 @@ defmodule Accord.TLA.ViolationReportTest.MockProtocol do
 
   def __tla_domains__ do
     %{
-      "state" => ~s({"accepting", "idle"}),
+      "state" => ~s({"accepting", "idle", "stopped"}),
       "buffer_size" => "0..3",
-      "total_enqueued" => "0..3"
+      "total_enqueued" => "0..3",
+      "counter" => "0..5"
     }
   end
 
   def __tla_span__(_), do: nil
 
   def __ir__ do
-    %{source_file: nil}
+    %Accord.IR{
+      name: __MODULE__,
+      source_file: nil,
+      initial: :idle,
+      states: %{
+        idle: %Accord.IR.State{name: :idle, terminal: false, transitions: [:placeholder]},
+        accepting: %Accord.IR.State{
+          name: :accepting,
+          terminal: false,
+          transitions: [:placeholder]
+        },
+        stopped: %Accord.IR.State{name: :stopped, terminal: false, transitions: []}
+      },
+      anystate: []
+    }
   end
 end
 
@@ -123,6 +138,100 @@ defmodule Accord.TLA.ViolationReportTest do
       assert formatted =~ "deadlock reached"
       assert formatted =~ "step 1: Initial"
       assert formatted =~ "step 2: StopFromUnlockedToStopped"
+    end
+  end
+
+  describe "deadlock diagnosis hints" do
+    test "no transitions — suggests marking terminal" do
+      # :stopped has transitions: [] in MockProtocol IR.
+      violation = %{
+        kind: :deadlock,
+        property: nil,
+        message: nil,
+        trace: [
+          %{number: 1, action: nil, assignments: %{"state" => "\"idle\""}},
+          %{
+            number: 2,
+            action: "StopFromIdleToStopped",
+            assignments: %{"state" => "\"stopped\""}
+          }
+        ]
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      assert formatted =~ "not marked terminal"
+      assert formatted =~ ":stopped"
+      assert formatted =~ "mark :stopped as terminal"
+    end
+
+    test "transitions exist with variable at domain boundary — suggests widening" do
+      # :accepting has transitions in MockProtocol IR, counter domain is 0..5.
+      violation = %{
+        kind: :deadlock,
+        property: nil,
+        message: nil,
+        trace: [
+          %{
+            number: 1,
+            action: nil,
+            assignments: %{"state" => "\"idle\"", "counter" => "0"}
+          },
+          %{
+            number: 2,
+            action: "IncrementFromIdleToAccepting",
+            assignments: %{"state" => "\"accepting\"", "counter" => "5"}
+          }
+        ]
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      assert formatted =~ "at maximum of its domain 0..5"
+      assert formatted =~ "counter"
+      assert formatted =~ "widen the domain"
+    end
+
+    test "non-deadlock violation — no deadlock hints" do
+      violation = %{
+        kind: :invariant,
+        property: "TypeInvariant",
+        message: nil,
+        trace: [
+          %{
+            number: 1,
+            action: nil,
+            assignments: %{"state" => "\"stopped\""}
+          }
+        ]
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      refute formatted =~ "not marked terminal"
+      refute formatted =~ "transitions"
+    end
+
+    test "module without __ir__/0 — graceful degradation" do
+      violation = %{
+        kind: :deadlock,
+        property: nil,
+        message: nil,
+        trace: [
+          %{number: 1, action: nil, assignments: %{"state" => "\"stopped\""}},
+          %{
+            number: 2,
+            action: "Stop",
+            assignments: %{"state" => "\"stopped\""}
+          }
+        ]
+      }
+
+      # Enum doesn't export __ir__/0.
+      formatted = ViolationReport.format(violation, Enum, strict: false)
+
+      assert formatted =~ "deadlock reached"
+      refute formatted =~ "not marked terminal"
     end
   end
 
