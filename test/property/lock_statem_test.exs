@@ -292,7 +292,8 @@ defmodule Accord.Property.LockStatemTest do
   # -- Property --
 
   property "lock protocol monitor handles tracks, branching, and faults correctly",
-           [numtests: 200, max_size: 30] do
+    numtests: 200,
+    max_size: 30 do
     forall cmds <- commands(__MODULE__) do
       {:ok, faulty} = FaultyServer.start_link(Lock.Server)
       compiled = Lock.Protocol.__compiled__()

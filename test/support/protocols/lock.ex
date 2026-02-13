@@ -9,50 +9,50 @@ defmodule Accord.Test.Lock.Protocol do
   """
   use Accord.Protocol
 
-  initial(:unlocked)
+  initial :unlocked
 
-  track(:holder, :term, default: nil)
-  track(:fence_token, :non_neg_integer, default: 0)
+  track :holder, :term, default: nil
+  track :fence_token, :non_neg_integer, default: 0
 
   state :unlocked do
     on {:acquire, _client_id :: term()} do
-      reply({:ok, pos_integer()})
-      goto(:locked)
+      reply {:ok, pos_integer()}
+      goto :locked
 
-      update(fn {:acquire, cid}, {:ok, token}, tracks ->
+      update fn {:acquire, cid}, {:ok, token}, tracks ->
         %{tracks | holder: cid, fence_token: token}
-      end)
+      end
     end
 
-    on(:stop, reply: :stopped, goto: :stopped)
+    on :stop, reply: :stopped, goto: :stopped
   end
 
   state :locked do
     on {:release, _token :: pos_integer()} do
-      branch(:ok, goto: :unlocked)
-      branch({:error, :invalid_token}, goto: :locked)
+      branch :ok, goto: :unlocked
+      branch {:error, :invalid_token}, goto: :locked
 
-      update(fn _msg, reply, tracks ->
+      update fn _msg, reply, tracks ->
         case reply do
           :ok -> %{tracks | holder: nil}
           _ -> tracks
         end
-      end)
+      end
     end
 
     on {:acquire, _client_id :: term()} do
-      reply({:error, :already_held})
-      goto(:locked)
+      reply {:error, :already_held}
+      goto :locked
     end
 
-    on(:stop, reply: :stopped, goto: :stopped)
+    on :stop, reply: :stopped, goto: :stopped
   end
 
-  state(:stopped, terminal: true)
+  state :stopped, terminal: true
 
   anystate do
-    on(:ping, reply: :pong)
-    cast(:heartbeat)
+    on :ping, reply: :pong
+    cast :heartbeat
   end
 end
 
