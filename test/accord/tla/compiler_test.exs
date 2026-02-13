@@ -30,10 +30,7 @@ defmodule Accord.TLA.CompilerTest do
                   next_state: :locked,
                   constraint: %{
                     fun: fn {:ok, token}, tracks -> token > tracks.fence_token end,
-                    ast:
-                      quote(
-                        do: fn {:ok, token}, tracks -> token > tracks.fence_token end
-                      )
+                    ast: quote(do: fn {:ok, token}, tracks -> token > tracks.fence_token end)
                   }
                 }
               ],
