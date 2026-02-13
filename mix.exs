@@ -40,7 +40,7 @@ defmodule Accord.MixProject do
 
   defp deps do
     [
-      {:pentiment, "~> 0.1.2"},
+      {:pentiment, "~> 0.1.3"},
       {:propcheck, "~> 1.4"},
       {:stream_data, "~> 1.0", only: [:dev, :test]},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
