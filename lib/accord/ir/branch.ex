@@ -10,9 +10,10 @@ defmodule Accord.IR.Branch do
           reply_type: Accord.IR.Type.t(),
           next_state: atom(),
           constraint: %{fun: function(), ast: Macro.t()} | nil,
-          span: Pentiment.Span.t() | nil
+          span: Pentiment.Span.t() | nil,
+          next_state_span: Pentiment.Span.t() | nil
         }
 
   @enforce_keys [:reply_type, :next_state]
-  defstruct [:reply_type, :next_state, :constraint, :span]
+  defstruct [:reply_type, :next_state, :constraint, :span, :next_state_span]
 end

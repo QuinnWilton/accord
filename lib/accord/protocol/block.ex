@@ -54,8 +54,17 @@ defmodule Accord.Protocol.Block do
 
   @doc false
   defmacro goto(state_name) do
+    line = __CALLER__.line
+    pattern = inspect(state_name)
+
     quote do
       Module.put_attribute(__MODULE__, :accord_on_goto, unquote(state_name))
+
+      Module.put_attribute(
+        __MODULE__,
+        :accord_on_goto_span,
+        Pentiment.Span.search(line: unquote(line), pattern: unquote(pattern))
+      )
     end
   end
 
@@ -88,12 +97,20 @@ defmodule Accord.Protocol.Block do
   @doc false
   defmacro branch(reply_spec, opts) do
     next_state = Keyword.fetch!(opts, :goto)
+    where_fn = Keyword.get(opts, :where)
     reply_type = Accord.Protocol.parse_reply_spec(reply_spec)
     escaped = Macro.escape(reply_type)
+    escaped_where = if where_fn, do: Macro.escape(where_fn)
     line = __CALLER__.line
     pattern = Macro.to_string(reply_spec)
+    next_state_pattern = inspect(next_state)
 
     quote do
+      constraint =
+        if unquote(where_fn) do
+          %{fun: unquote(where_fn), ast: unquote(escaped_where)}
+        end
+
       branches = Module.get_attribute(__MODULE__, :accord_on_branches)
 
       Module.put_attribute(
@@ -103,7 +120,10 @@ defmodule Accord.Protocol.Block do
           %Branch{
             reply_type: unquote(escaped),
             next_state: unquote(next_state),
-            span: Pentiment.Span.search(line: unquote(line), pattern: unquote(pattern))
+            constraint: constraint,
+            span: Pentiment.Span.search(line: unquote(line), pattern: unquote(pattern)),
+            next_state_span:
+              Pentiment.Span.search(line: unquote(line), pattern: unquote(next_state_pattern))
           }
           | branches
         ]

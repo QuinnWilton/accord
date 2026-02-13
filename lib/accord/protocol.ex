@@ -268,6 +268,7 @@ defmodule Accord.Protocol do
       Module.put_attribute(__MODULE__, :accord_on_reply_constraint, nil)
       Module.put_attribute(__MODULE__, :accord_on_reply_span, nil)
       Module.put_attribute(__MODULE__, :accord_on_goto, nil)
+      Module.put_attribute(__MODULE__, :accord_on_goto_span, nil)
       Module.put_attribute(__MODULE__, :accord_on_guard, nil)
       Module.put_attribute(__MODULE__, :accord_on_update, nil)
       Module.put_attribute(__MODULE__, :accord_on_branches, [])
@@ -278,6 +279,7 @@ defmodule Accord.Protocol do
       reply_constraint = Module.get_attribute(__MODULE__, :accord_on_reply_constraint)
       reply_span = Module.get_attribute(__MODULE__, :accord_on_reply_span)
       goto_state = Module.get_attribute(__MODULE__, :accord_on_goto)
+      goto_span = Module.get_attribute(__MODULE__, :accord_on_goto_span)
       guard_pair = Module.get_attribute(__MODULE__, :accord_on_guard)
       update_pair = Module.get_attribute(__MODULE__, :accord_on_update)
       explicit_branches = Module.get_attribute(__MODULE__, :accord_on_branches) |> Enum.reverse()
@@ -297,7 +299,8 @@ defmodule Accord.Protocol do
                 reply_type: reply_type,
                 next_state: next || :__same__,
                 constraint: reply_constraint,
-                span: reply_span || unquote(span)
+                span: reply_span || unquote(span),
+                next_state_span: goto_span
               }
             ]
           else
@@ -328,6 +331,7 @@ defmodule Accord.Protocol do
       Module.delete_attribute(__MODULE__, :accord_on_reply_constraint)
       Module.delete_attribute(__MODULE__, :accord_on_reply_span)
       Module.delete_attribute(__MODULE__, :accord_on_goto)
+      Module.delete_attribute(__MODULE__, :accord_on_goto_span)
       Module.delete_attribute(__MODULE__, :accord_on_guard)
       Module.delete_attribute(__MODULE__, :accord_on_update)
       Module.delete_attribute(__MODULE__, :accord_on_branches)
@@ -352,6 +356,7 @@ defmodule Accord.Protocol do
 
     span = message_span_ast(message_spec, __CALLER__)
     reply_pattern = Macro.to_string(reply_spec)
+    next_state_pattern = if next_state, do: inspect(next_state)
     caller_file = __CALLER__.file
     caller_line = __CALLER__.line
 
@@ -395,6 +400,14 @@ defmodule Accord.Protocol do
             line: unquote(caller_line)
         end
 
+        next_state_span =
+          if unquote(next_state_pattern) do
+            Pentiment.Span.search(
+              line: unquote(caller_line),
+              pattern: unquote(next_state_pattern)
+            )
+          end
+
         transition = %Transition{
           message_pattern: unquote(message_pattern),
           message_types: unquote(escaped_types),
@@ -405,6 +418,7 @@ defmodule Accord.Protocol do
             %Branch{
               reply_type: unquote(escaped_reply_type),
               next_state: unquote(next_state),
+              next_state_span: next_state_span,
               span:
                 Pentiment.Span.search(
                   line: unquote(caller_line),
@@ -492,7 +506,6 @@ defmodule Accord.Protocol do
       import Accord.Protocol.Property
 
       Module.put_attribute(__MODULE__, :accord_property_checks, [])
-      Module.put_attribute(__MODULE__, :accord_current_property_span, unquote(span))
 
       unquote(block)
 
@@ -510,7 +523,6 @@ defmodule Accord.Protocol do
       )
 
       Module.delete_attribute(__MODULE__, :accord_property_checks)
-      Module.delete_attribute(__MODULE__, :accord_current_property_span)
 
       import Accord.Protocol.Property, only: []
     end
