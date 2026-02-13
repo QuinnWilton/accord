@@ -46,6 +46,7 @@ defmodule Accord.Pass.TLA.Emit do
           render_tla_next(actions),
           render_tla_spec(actions),
           render_tla_properties(properties),
+          render_tla_state_constraint(ss),
           "===="
         ]
 
@@ -141,6 +142,12 @@ defmodule Accord.Pass.TLA.Emit do
     end
   end
 
+  defp render_tla_state_constraint(%StateSpace{state_constraint: nil}), do: ""
+
+  defp render_tla_state_constraint(%StateSpace{state_constraint: constraint}) do
+    "\\* State constraint for bounded model checking\nStateConstraint == #{constraint}\n"
+  end
+
   # -- CFG File --
 
   defp render_cfg(ss, _actions, properties) do
@@ -162,6 +169,14 @@ defmodule Accord.Pass.TLA.Emit do
       |> Enum.filter(&(&1.kind == :temporal))
       |> Enum.map(&"PROPERTY #{&1.name}")
 
+    # Add state constraint for bounded model checking.
+    constraint =
+      if ss.state_constraint do
+        ["", "CONSTRAINT StateConstraint"]
+      else
+        []
+      end
+
     # Add constant declarations for model values and NULL.
     constants =
       case ss.constants do
@@ -169,7 +184,7 @@ defmodule Accord.Pass.TLA.Emit do
         names -> ["" | Enum.map(names, &"CONSTANT #{&1} = #{&1}")]
       end
 
-    all_sections = sections ++ invariants ++ temporals ++ constants
+    all_sections = sections ++ invariants ++ temporals ++ constraint ++ constants
     Enum.join(all_sections, "\n") <> "\n"
   end
 end

@@ -39,12 +39,14 @@ defmodule Accord.TLA.ModelConfig do
   @type t :: %__MODULE__{
           domains: %{atom() => domain()},
           symmetry_sets: [atom()],
-          max_list_length: pos_integer()
+          max_list_length: pos_integer(),
+          state_constraint: String.t() | nil
         }
 
   defstruct domains: %{},
             symmetry_sets: [],
-            max_list_length: nil
+            max_list_length: nil,
+            state_constraint: nil
 
   @builtin_defaults %{
     pos_integer: 1..3,
@@ -159,7 +161,8 @@ defmodule Accord.TLA.ModelConfig do
     %__MODULE__{
       domains: Keyword.get(config, :domains, %{}),
       symmetry_sets: Keyword.get(config, :symmetry_sets, []),
-      max_list_length: Keyword.get(config, :max_list_length, 3)
+      max_list_length: Keyword.get(config, :max_list_length, 3),
+      state_constraint: Keyword.get(config, :state_constraint)
     }
   end
 
@@ -169,7 +172,8 @@ defmodule Accord.TLA.ModelConfig do
     %__MODULE__{
       domains: Map.merge(project.domains, protocol.domains),
       symmetry_sets: Enum.uniq(project.symmetry_sets ++ protocol.symmetry_sets),
-      max_list_length: protocol.max_list_length || project.max_list_length || 3
+      max_list_length: protocol.max_list_length || project.max_list_length || 3,
+      state_constraint: protocol.state_constraint || project.state_constraint
     }
   end
 end

@@ -83,7 +83,8 @@ defmodule Accord.Pass.TLA.BuildStateSpace do
       states: states,
       has_event_var: has_local_inv,
       correspondences: correspondences,
-      constants: constants
+      constants: constants,
+      state_constraint: config.state_constraint
     }
 
     {:ok, state_space}
