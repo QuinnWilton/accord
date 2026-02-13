@@ -235,14 +235,11 @@ defmodule Accord.Protocol do
 
   ## Block form
 
-      on {:acquire, client_id :: term(), token :: pos_integer()} do
+      on {:acquire, client_id :: term()} do
         reply {:ok, pos_integer()}
         goto :locked
-        guard fn {:acquire, _client_id, token}, tracks ->
-          token > tracks.fence_token
-        end
-        update fn {:acquire, client_id, token}, _reply, tracks ->
-          %{tracks | holder: client_id, fence_token: token}
+        update fn {:acquire, cid}, {:ok, token}, tracks ->
+          %{tracks | holder: cid, fence_token: token}
         end
       end
 
@@ -519,6 +516,12 @@ defmodule Accord.Protocol do
         {:error, _} -> ir
       end
 
+    # Lift anonymous closures into named module functions so they
+    # serialize as EXPORT_EXT (MFA references) rather than NEW_FUN_EXT
+    # (which encodes references to the temporary compiler module that
+    # won't exist when the .beam is loaded in a later VM session).
+    {ir, fn_specs} = lift_closures(ir, env.module)
+
     # Build runtime artifacts.
     {:ok, table} = Accord.Pass.BuildTransitionTable.run(ir)
     {:ok, track_init} = Accord.Pass.BuildTrackInit.run(ir)
@@ -529,12 +532,6 @@ defmodule Accord.Protocol do
       track_init: track_init
     }
 
-    # Store IR and compiled data as serialized binaries in module
-    # attributes. Closures can't be embedded via @attr in function bodies
-    # (Elixir tries Macro.escape which fails on funs), but
-    # :erlang.term_to_binary handles funs correctly and the resulting
-    # binary embeds as a constant in the .beam file. This survives
-    # compilation caching — no persistent_term needed.
     ir_bin = :erlang.term_to_binary(ir)
     compiled_bin = :erlang.term_to_binary(compiled)
     Module.put_attribute(env.module, :accord_ir_bin, ir_bin)
@@ -560,10 +557,14 @@ defmodule Accord.Protocol do
           []
       end
 
+    fn_defs = fn_to_defs(fn_specs)
+
     monitor_module = Module.concat(env.module, Monitor)
     parent_module = env.module
 
     quote do
+      unquote_splicing(fn_defs)
+
       def __ir__, do: :erlang.binary_to_term(@accord_ir_bin)
       def __compiled__, do: :erlang.binary_to_term(@accord_compiled_bin)
 
@@ -685,6 +686,117 @@ defmodule Accord.Protocol do
     File.mkdir_p!(base_dir)
     File.write!(Path.join(base_dir, "#{base_name}.tla"), result.tla)
     File.write!(Path.join(base_dir, "#{base_name}.cfg"), result.cfg)
+  end
+
+  # -- Closure Lifting --
+  #
+  # Anonymous closures defined in guard/update/invariant/action/forbidden
+  # macros reference the temporary :elixir_compiler_N module that exists
+  # only during compilation. When serialized via term_to_binary and
+  # deserialized in a later VM session, those references break.
+  #
+  # lift_closures/2 replaces each closure with an external function
+  # capture (&Module.__accord_fn_N__/arity) and collects the fn ASTs
+  # so they can be compiled as named functions in the module.
+
+  defp lift_closures(ir, module) do
+    acc = {0, []}
+
+    {states, acc} =
+      Enum.reduce(ir.states, {%{}, acc}, fn {name, state}, {states, acc} ->
+        {transitions, acc} = lift_transition_list(state.transitions, module, acc)
+        {Map.put(states, name, %{state | transitions: transitions}), acc}
+      end)
+
+    {anystate, acc} = lift_transition_list(ir.anystate, module, acc)
+    {properties, acc} = lift_property_list(ir.properties, module, acc)
+
+    {_counter, fn_specs} = acc
+    lifted_ir = %{ir | states: states, anystate: anystate, properties: properties}
+    {lifted_ir, Enum.reverse(fn_specs)}
+  end
+
+  defp lift_transition_list(transitions, module, acc) do
+    Enum.map_reduce(transitions, acc, fn transition, acc ->
+      {guard, acc} = lift_fun_pair(transition.guard, module, acc)
+      {update, acc} = lift_fun_pair(transition.update, module, acc)
+      {%{transition | guard: guard, update: update}, acc}
+    end)
+  end
+
+  defp lift_fun_pair(nil, _module, acc), do: {nil, acc}
+
+  defp lift_fun_pair(%{fun: _fun, ast: ast} = pair, module, {counter, fn_specs}) do
+    name = :"__accord_fn_#{counter}__"
+    arity = fn_arity(ast)
+    capture = Function.capture(module, name, arity)
+    {%{pair | fun: capture}, {counter + 1, [{name, arity, ast} | fn_specs]}}
+  end
+
+  defp lift_property_list(properties, module, acc) do
+    Enum.map_reduce(properties, acc, fn property, acc ->
+      {checks, acc} = lift_check_list(property.checks, module, acc)
+      {%{property | checks: checks}, acc}
+    end)
+  end
+
+  defp lift_check_list(checks, module, acc) do
+    Enum.map_reduce(checks, acc, fn check, acc ->
+      {spec, acc} = lift_check_spec(check.kind, check.spec, module, acc)
+      {%{check | spec: spec}, acc}
+    end)
+  end
+
+  defp lift_check_spec(kind, %{fun: _fun, ast: ast} = spec, module, {counter, fn_specs})
+       when kind in [:invariant, :local_invariant, :action, :forbidden] do
+    name = :"__accord_fn_#{counter}__"
+    arity = fn_arity(ast)
+    capture = Function.capture(module, name, arity)
+    {%{spec | fun: capture}, {counter + 1, [{name, arity, ast} | fn_specs]}}
+  end
+
+  defp lift_check_spec(_kind, spec, _module, acc), do: {spec, acc}
+
+  defp fn_arity({:fn, _, [{:->, _, [args, _]} | _]}), do: length(args)
+
+  # -- Fn AST → Def AST --
+
+  defp fn_to_defs(fn_specs) do
+    Enum.flat_map(fn_specs, fn {name, _arity, {:fn, _, clauses}} ->
+      Enum.map(clauses, fn {:->, _, [args, body]} ->
+        {def_args, guards} = extract_fn_guard(args)
+        head = {name, [], def_args}
+
+        case guards do
+          nil ->
+            quote do
+              @doc false
+              def unquote(head), do: unquote(body)
+            end
+
+          _ ->
+            quote do
+              @doc false
+              def unquote({:when, [], [head | guards]}), do: unquote(body)
+            end
+        end
+      end)
+    end)
+  end
+
+  # Extracts guard expressions from fn clause args.
+  # In `fn a, b when is_integer(a) -> ...`, the last arg is
+  # {:when, _, [last_pattern | guard_exprs]}.
+  defp extract_fn_guard([]), do: {[], nil}
+
+  defp extract_fn_guard(args) do
+    case List.last(args) do
+      {:when, _, [last_arg | guards]} ->
+        {Enum.slice(args, 0..-2//1) ++ [last_arg], guards}
+
+      _ ->
+        {args, nil}
+    end
   end
 
   # -- Message Spec Parsing --

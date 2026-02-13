@@ -7,6 +7,8 @@ defmodule Accord.MonitorTest do
   alias Accord.Monitor.Compiled
   alias Accord.Pass.{BuildTransitionTable, BuildTrackInit}
 
+  @moduletag :capture_log
+
   # -- Simple test server --
 
   defmodule EchoServer do
