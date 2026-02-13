@@ -350,9 +350,12 @@ defmodule Accord.Monitor do
     if check.spec.fun.(new_tracks) do
       {:ok, data}
     else
+      base = Violation.invariant_violated(next_state, property.name, new_tracks)
+
       violation = %{
-        Violation.invariant_violated(next_state, property.name, new_tracks)
-        | span: property.span
+        base
+        | span: check.span,
+          context: Map.put(base.context, :check_kind, check.kind)
       }
 
       {:violation, violation, data}
@@ -372,9 +375,12 @@ defmodule Accord.Monitor do
       if check.spec.fun.(message, new_tracks) do
         {:ok, data}
       else
+        base = Violation.invariant_violated(next_state, property.name, new_tracks)
+
         violation = %{
-          Violation.invariant_violated(next_state, property.name, new_tracks)
-          | span: property.span
+          base
+          | span: check.span,
+            context: Map.put(base.context, :check_kind, check.kind)
         }
 
         {:violation, violation, data}
@@ -396,9 +402,12 @@ defmodule Accord.Monitor do
     if check.spec.fun.(old_tracks, new_tracks) do
       {:ok, data}
     else
+      base = Violation.action_violated(next_state, property.name, old_tracks, new_tracks)
+
       violation = %{
-        Violation.action_violated(next_state, property.name, old_tracks, new_tracks)
-        | span: property.span
+        base
+        | span: check.span,
+          context: Map.put(base.context, :check_kind, check.kind)
       }
 
       {:violation, violation, data}
@@ -419,9 +428,12 @@ defmodule Accord.Monitor do
     if is_nil(value) or value <= check.spec.max do
       {:ok, data}
     else
+      base = Violation.invariant_violated(next_state, property.name, new_tracks)
+
       violation = %{
-        Violation.invariant_violated(next_state, property.name, new_tracks)
-        | span: property.span
+        base
+        | span: check.span,
+          context: Map.put(base.context, :check_kind, check.kind)
       }
 
       {:violation, violation, data}
@@ -438,9 +450,12 @@ defmodule Accord.Monitor do
          data
        ) do
     if check.spec.fun.(new_tracks) do
+      base = Violation.invariant_violated(next_state, property.name, new_tracks)
+
       violation = %{
-        Violation.invariant_violated(next_state, property.name, new_tracks)
-        | span: property.span
+        base
+        | span: check.span,
+          context: Map.put(base.context, :check_kind, check.kind)
       }
 
       {:violation, violation, data}
@@ -462,9 +477,12 @@ defmodule Accord.Monitor do
       if MapSet.member?(data.visited_states, check.spec.required) do
         {:ok, data}
       else
+        base = Violation.precedence_violated(next_state, property.name, check.spec.required)
+
         violation = %{
-          Violation.precedence_violated(next_state, property.name, check.spec.required)
-          | span: property.span
+          base
+          | span: check.span,
+            context: Map.put(base.context, :check_kind, check.kind)
         }
 
         {:violation, violation, data}
@@ -492,9 +510,12 @@ defmodule Accord.Monitor do
       if is_nil(last) or value >= last do
         {:ok, %{data | ordered_last: Map.put(data.ordered_last, property.name, value)}}
       else
+        base = Violation.ordering_violated(next_state, property.name, last, value)
+
         violation = %{
-          Violation.ordering_violated(next_state, property.name, last, value)
-          | span: property.span
+          base
+          | span: check.span,
+            context: Map.put(base.context, :check_kind, check.kind)
         }
 
         {:violation, violation, data}

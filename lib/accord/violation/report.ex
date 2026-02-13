@@ -196,10 +196,17 @@ defmodule Accord.Violation.Report do
         cond do
           span != nil and strict? ->
             SpanValidation.validate_span!(span, "#{violation.kind} in state :#{violation.state}")
-            Report.with_label(report, Label.primary(span, label_message(violation.kind)))
+
+            Report.with_label(
+              report,
+              Label.primary(span, label_message(violation.kind, violation.context))
+            )
 
           span != nil ->
-            Report.with_label(report, Label.primary(span, label_message(violation.kind)))
+            Report.with_label(
+              report,
+              Label.primary(span, label_message(violation.kind, violation.context))
+            )
 
           strict? and violation.kind in @spannable_kinds ->
             raise ArgumentError,
@@ -247,13 +254,21 @@ defmodule Accord.Violation.Report do
 
   defp span_for_violation(_kind, _violation, transition), do: transition.span
 
-  defp label_message(:invalid_reply), do: "reply type defined here"
-  defp label_message(:argument_type), do: "type constraint defined here"
-  defp label_message(:guard_failed), do: "guarded transition defined here"
-  defp label_message(:invariant_violated), do: "property defined here"
-  defp label_message(:action_violated), do: "property defined here"
-  defp label_message(:liveness_violated), do: "property defined here"
-  defp label_message(_), do: "transition defined here"
+  defp label_message(:invariant_violated, %{check_kind: :bounded}),
+    do: "bounded check defined here"
+
+  defp label_message(:invariant_violated, %{check_kind: :forbidden}),
+    do: "forbidden check defined here"
+
+  defp label_message(:invariant_violated, _), do: "invariant check defined here"
+  defp label_message(:action_violated, _), do: "action check defined here"
+  defp label_message(:ordering_violated, _), do: "ordered check defined here"
+  defp label_message(:precedence_violated, _), do: "precedence check defined here"
+  defp label_message(:liveness_violated, _), do: "property defined here"
+  defp label_message(:invalid_reply, _), do: "reply type defined here"
+  defp label_message(:argument_type, _), do: "type constraint defined here"
+  defp label_message(:guard_failed, _), do: "guarded transition defined here"
+  defp label_message(_, _), do: "transition defined here"
 
   # -- Help Builders --
 
