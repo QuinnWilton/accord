@@ -99,7 +99,7 @@ defmodule Accord.TLA.ViolationReport do
             source_file = source_file(mod)
 
             if source_file do
-              span = widen_transition_span(span)
+              span = widen_transition_span(span, source_file)
 
               report
               |> Report.with_source(source_file)
@@ -115,13 +115,79 @@ defmodule Accord.TLA.ViolationReport do
   end
 
   # Transition Position spans from the IR are narrow — they cover only the
-  # message tag (e.g., `{:release,`). Widen to include the `on ` keyword
-  # that precedes the message spec for a more complete highlight.
-  defp widen_transition_span(%Position{} = span) when span.start_column > 3 do
-    %Position{span | start_column: span.start_column - 3}
+  # message tag (e.g., `:release`). Widen to cover the full message spec
+  # (e.g., `{:release, token :: pos_integer()}`) by reading the source line
+  # and finding the enclosing tuple braces.
+  defp widen_transition_span(%Position{} = span, source_file) do
+    with true <- File.exists?(source_file),
+         line when is_binary(line) <- read_source_line(source_file, span.start_line) do
+      widen_to_message_spec(span, line)
+    else
+      _ -> span
+    end
   end
 
-  defp widen_transition_span(span), do: span
+  defp widen_transition_span(span, _source_file), do: span
+
+  # Find the opening `{` before the span start and its matching `}`.
+  defp widen_to_message_spec(%Position{} = span, line) do
+    col0 = span.start_column - 1
+
+    case find_open_brace(line, col0) do
+      nil ->
+        span
+
+      open_idx ->
+        case find_matching_close(line, open_idx) do
+          nil ->
+            span
+
+          close_idx ->
+            %Position{
+              span
+              | start_column: open_idx + 1,
+                end_line: span.start_line,
+                end_column: close_idx + 2
+            }
+        end
+    end
+  end
+
+  # Scan backwards from `pos` (exclusive) to find the nearest `{`.
+  # Stops if a non-whitespace, non-`{` character is encountered.
+  defp find_open_brace(_line, pos) when pos <= 0, do: nil
+
+  defp find_open_brace(line, pos) do
+    case :binary.at(line, pos - 1) do
+      ?{ -> pos - 1
+      c when c in [?\s, ?\t] -> find_open_brace(line, pos - 1)
+      _ -> nil
+    end
+  end
+
+  # Find the `}` matching the `{` at `open_idx` via brace counting.
+  defp find_matching_close(line, open_idx) do
+    line
+    |> binary_part(open_idx, byte_size(line) - open_idx)
+    |> String.to_charlist()
+    |> Enum.reduce_while({0, open_idx}, fn
+      ?{, {depth, pos} -> {:cont, {depth + 1, pos + 1}}
+      ?}, {1, pos} -> {:halt, {:found, pos}}
+      ?}, {depth, pos} -> {:cont, {depth - 1, pos + 1}}
+      _, {depth, pos} -> {:cont, {depth, pos + 1}}
+    end)
+    |> case do
+      {:found, pos} -> pos
+      _ -> nil
+    end
+  end
+
+  defp read_source_line(path, line_number) do
+    path
+    |> File.read!()
+    |> String.split("\n")
+    |> Enum.at(line_number - 1)
+  end
 
   # Add compact trace steps as notes.
   defp add_trace_notes(report, %{trace: trace}) do
