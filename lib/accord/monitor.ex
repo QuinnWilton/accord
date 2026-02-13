@@ -26,8 +26,11 @@ defmodule Accord.Monitor do
     :tracks,
     :violation_policy,
     call_timeout: 5_000,
+    liveness_timeout: nil,
     # Property checking state.
-    correspondence: %{}
+    correspondence: %{},
+    visited_states: MapSet.new(),
+    ordered_last: %{}
   ]
 
   # -- Public API --
@@ -40,15 +43,17 @@ defmodule Accord.Monitor do
   - `:upstream` (required) — PID of the server to forward messages to.
   - `:violation_policy` — `:log` | `:reject` | `:crash` | `{mod, fun}`. Default `:crash`.
   - `:call_timeout` — timeout for upstream calls in ms. Default 5000.
+  - `:liveness_timeout` — override all per-property liveness timeouts. Default `nil` (use per-property defaults).
   """
   @spec start_link(Compiled.t(), keyword()) :: :gen_statem.start_ret()
   def start_link(%Compiled{} = compiled, opts) do
     upstream = Keyword.fetch!(opts, :upstream)
     policy = Keyword.get(opts, :violation_policy, :crash)
     timeout = Keyword.get(opts, :call_timeout, 5_000)
+    liveness_timeout = Keyword.get(opts, :liveness_timeout)
     name = Keyword.get(opts, :name)
 
-    init_arg = {compiled, upstream, policy, timeout}
+    init_arg = {compiled, upstream, policy, timeout, liveness_timeout}
 
     if name do
       :gen_statem.start_link({:local, name}, __MODULE__, init_arg, [])
@@ -79,13 +84,15 @@ defmodule Accord.Monitor do
   def callback_mode, do: :handle_event_function
 
   @impl true
-  def init({compiled, upstream, policy, timeout}) do
+  def init({compiled, upstream, policy, timeout, liveness_timeout}) do
     data = %__MODULE__{
       compiled: compiled,
       upstream: upstream,
       tracks: compiled.track_init,
       violation_policy: policy,
-      call_timeout: timeout
+      call_timeout: timeout,
+      liveness_timeout: liveness_timeout,
+      visited_states: MapSet.new([compiled.ir.initial])
     }
 
     {:ok, compiled.ir.initial, data}
@@ -100,6 +107,18 @@ defmodule Accord.Monitor do
   # Asynchronous cast
   def handle_event(:cast, {:accord_cast, message}, state, data) do
     handle_cast(message, state, data)
+  end
+
+  # Liveness timer expiry.
+  def handle_event({:timeout, {:liveness, prop_name}}, _content, state, data) do
+    property = Enum.find(data.compiled.ir.properties, &(&1.name == prop_name))
+
+    violation = %{
+      Violation.liveness_violated(state, prop_name)
+      | span: if(property, do: property.span)
+    }
+
+    handle_liveness_violation(violation, state, data)
   end
 
   # -- Call Pipeline --
@@ -173,11 +192,23 @@ defmodule Accord.Monitor do
         case check_properties(message, actual_next, old_tracks, new_tracks, data) do
           {:ok, updated_data} ->
             updated_data = %{updated_data | tracks: new_tracks}
-            {:next_state, actual_next, updated_data, [{:reply, from, reply}]}
+            updated_data = track_visited_state(updated_data, actual_next)
+            timer_actions = liveness_actions(updated_data, actual_next)
+            {:next_state, actual_next, updated_data, [{:reply, from, reply} | timer_actions]}
 
           {:violation, violation, updated_data} ->
             updated_data = %{updated_data | tracks: new_tracks}
-            handle_property_violation(violation, reply, from, actual_next, updated_data)
+            updated_data = track_visited_state(updated_data, actual_next)
+            timer_actions = liveness_actions(updated_data, actual_next)
+
+            handle_property_violation(
+              violation,
+              reply,
+              from,
+              actual_next,
+              updated_data,
+              timer_actions
+            )
         end
 
       {:error, _reason} ->
@@ -389,6 +420,82 @@ defmodule Accord.Monitor do
   end
 
   defp check_single(
+         %{kind: :forbidden} = check,
+         property,
+         _msg,
+         next_state,
+         _old,
+         new_tracks,
+         data
+       ) do
+    if check.spec.fun.(new_tracks) do
+      violation = %{
+        Violation.invariant_violated(next_state, property.name, new_tracks)
+        | span: property.span
+      }
+
+      {:violation, violation, data}
+    else
+      {:ok, data}
+    end
+  end
+
+  defp check_single(
+         %{kind: :precedence} = check,
+         property,
+         _msg,
+         next_state,
+         _old,
+         _new,
+         data
+       ) do
+    if next_state == check.spec.target do
+      if MapSet.member?(data.visited_states, check.spec.required) do
+        {:ok, data}
+      else
+        violation = %{
+          Violation.precedence_violated(next_state, property.name, check.spec.required)
+          | span: property.span
+        }
+
+        {:violation, violation, data}
+      end
+    else
+      {:ok, data}
+    end
+  end
+
+  defp check_single(
+         %{kind: :ordered} = check,
+         property,
+         message,
+         next_state,
+         _old,
+         _new,
+         data
+       ) do
+    tag = message_tag(message)
+
+    if tag == check.spec.event and is_tuple(message) do
+      value = extract_field(message, check.spec.extract)
+      last = Map.get(data.ordered_last, property.name)
+
+      if is_nil(last) or value >= last do
+        {:ok, %{data | ordered_last: Map.put(data.ordered_last, property.name, value)}}
+      else
+        violation = %{
+          Violation.ordering_violated(next_state, property.name, last, value)
+          | span: property.span
+        }
+
+        {:violation, violation, data}
+      end
+    else
+      {:ok, data}
+    end
+  end
+
+  defp check_single(
          %{kind: :correspondence} = check,
          _property,
          message,
@@ -403,10 +510,12 @@ defmodule Accord.Monitor do
     corr =
       cond do
         tag == check.spec.open ->
-          Map.update(corr, check.spec.open, 1, &(&1 + 1))
+          key = correspondence_key(check, message, :open)
+          Map.update(corr, key, 1, &(&1 + 1))
 
         tag in check.spec.close ->
-          Map.update(corr, check.spec.open, 0, &max(&1 - 1, 0))
+          key = correspondence_key(check, message, :close)
+          Map.update(corr, key, 0, &max(&1 - 1, 0))
 
         true ->
           corr
@@ -423,24 +532,111 @@ defmodule Accord.Monitor do
   defp message_tag(msg) when is_atom(msg), do: msg
   defp message_tag(msg) when is_tuple(msg), do: elem(msg, 0)
 
-  # Property violations allow the reply to be forwarded (the transition
-  # succeeded) but then the violation is reported separately.
-  defp handle_property_violation(violation, reply, from, next_state, data) do
+  # -- Field Extraction --
+
+  defp extract_field(message, %{position: pos, path: []}), do: elem(message, pos)
+
+  defp extract_field(message, %{position: pos, path: path}) do
+    get_in(elem(message, pos), Enum.map(path, &Access.key/1))
+  end
+
+  # -- Correspondence Key --
+
+  defp correspondence_key(%{spec: spec} = _check, message, role) do
+    case Map.get(spec, :open_extract) do
+      nil ->
+        # No :by option — use open tag as key (existing behavior).
+        spec.open
+
+      open_extract when role == :open ->
+        {spec.open, extract_field(message, open_extract)}
+
+      _open_extract when role == :close ->
+        tag = message_tag(message)
+        {spec.open, extract_field(message, spec.close_extracts[tag])}
+    end
+  end
+
+  # -- Visited State Tracking --
+
+  defp track_visited_state(data, state) do
+    %{data | visited_states: MapSet.put(data.visited_states, state)}
+  end
+
+  # -- Liveness Timer Actions --
+
+  defp liveness_actions(data, next_state) do
+    timeout_override = data.liveness_timeout
+
+    Enum.flat_map(data.compiled.ir.properties, fn prop ->
+      Enum.flat_map(prop.checks, fn
+        %{kind: :liveness} = check ->
+          timeout = timeout_override || check.spec.timeout
+
+          if timeout == :infinity do
+            []
+          else
+            liveness_timer_actions(prop.name, check, next_state, timeout)
+          end
+
+        _ ->
+          []
+      end)
+    end)
+  end
+
+  defp liveness_timer_actions(prop_name, check, next_state, timeout) do
+    in_trigger = matches_predicate?(check.spec.trigger, next_state)
+    in_target = matches_predicate?(check.spec.target, next_state)
+
+    cond do
+      in_target -> [{{:timeout, {:liveness, prop_name}}, :infinity, :cancel}]
+      in_trigger -> [{{:timeout, {:liveness, prop_name}}, timeout, prop_name}]
+      true -> []
+    end
+  end
+
+  defp matches_predicate?({:in_state, state}, current), do: current == state
+
+  # -- Liveness Violation Handling --
+
+  defp handle_liveness_violation(violation, _state, data) do
     case data.violation_policy do
       :log ->
         log_violation(violation)
-        {:next_state, next_state, data, [{:reply, from, reply}]}
+        {:keep_state, data}
 
       :reject ->
         log_violation(violation)
-        {:next_state, next_state, data, [{:reply, from, reply}]}
+        {:keep_state, data}
+
+      :crash ->
+        {:stop, {:protocol_violation, violation}, data}
+
+      {mod, fun} ->
+        apply(mod, fun, [violation])
+        {:keep_state, data}
+    end
+  end
+
+  # Property violations allow the reply to be forwarded (the transition
+  # succeeded) but then the violation is reported separately.
+  defp handle_property_violation(violation, reply, from, next_state, data, timer_actions) do
+    case data.violation_policy do
+      :log ->
+        log_violation(violation)
+        {:next_state, next_state, data, [{:reply, from, reply} | timer_actions]}
+
+      :reject ->
+        log_violation(violation)
+        {:next_state, next_state, data, [{:reply, from, reply} | timer_actions]}
 
       :crash ->
         {:stop_and_reply, {:protocol_violation, violation}, [{:reply, from, reply}]}
 
       {mod, fun} ->
         apply(mod, fun, [violation])
-        {:next_state, next_state, data, [{:reply, from, reply}]}
+        {:next_state, next_state, data, [{:reply, from, reply} | timer_actions]}
     end
   end
 

@@ -22,6 +22,8 @@ defmodule Accord.Violation do
   - `:invariant_violated` — a global or local invariant failed.
   - `:action_violated` — an action property (pre/post) failed.
   - `:liveness_violated` — a liveness timeout expired.
+  - `:precedence_violated` — entered a state without required predecessor.
+  - `:ordering_violated` — a monotonicity check on message fields failed.
   """
 
   @type blame :: :client | :server | :property
@@ -36,6 +38,8 @@ defmodule Accord.Violation do
           | :invariant_violated
           | :action_violated
           | :liveness_violated
+          | :precedence_violated
+          | :ordering_violated
 
   @type t :: %__MODULE__{
           blame: blame(),
@@ -178,6 +182,52 @@ defmodule Accord.Violation do
       state: state,
       message: property_name,
       context: %{property: property_name, old_tracks: old_tracks, new_tracks: new_tracks}
+    }
+  end
+
+  @doc """
+  Creates a property violation for a liveness timeout expiry.
+  """
+  @spec liveness_violated(atom(), atom()) :: t()
+  def liveness_violated(state, property_name) do
+    %__MODULE__{
+      blame: :property,
+      kind: :liveness_violated,
+      state: state,
+      message: property_name,
+      context: %{property: property_name}
+    }
+  end
+
+  @doc """
+  Creates a property violation for entering a state without a required predecessor.
+  """
+  @spec precedence_violated(atom(), atom(), atom()) :: t()
+  def precedence_violated(state, property_name, required_state) do
+    %__MODULE__{
+      blame: :property,
+      kind: :precedence_violated,
+      state: state,
+      message: property_name,
+      context: %{property: property_name, required_state: required_state}
+    }
+  end
+
+  @doc """
+  Creates a property violation for a monotonicity ordering failure.
+  """
+  @spec ordering_violated(atom(), atom(), term(), term()) :: t()
+  def ordering_violated(state, property_name, last_value, current_value) do
+    %__MODULE__{
+      blame: :property,
+      kind: :ordering_violated,
+      state: state,
+      message: property_name,
+      context: %{
+        property: property_name,
+        last_value: last_value,
+        current_value: current_value
+      }
     }
   end
 
