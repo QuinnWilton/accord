@@ -66,14 +66,42 @@ defmodule Accord.Pass.TLA.BuildStateSpaceTest do
       ir = %{
         minimal_ir()
         | tracks: [
-            %Track{name: :counter, type: :integer, default: 42}
+            %Track{name: :counter, type: :integer, default: 2}
           ]
       }
 
       {:ok, ss} = BuildStateSpace.run(ir, default_config())
       counter_var = Enum.find(ss.variables, &(&1.name == "counter"))
 
-      assert counter_var.init == "42"
+      assert counter_var.init == "2"
+    end
+
+    test "raises when default is outside resolved domain" do
+      ir = %{
+        minimal_ir()
+        | tracks: [
+            %Track{name: :counter, type: :integer, default: 42}
+          ]
+      }
+
+      assert_raise ArgumentError, ~r/track :counter default 42 is outside/, fn ->
+        BuildStateSpace.run(ir, default_config())
+      end
+    end
+
+    test "init override replaces protocol default" do
+      ir = %{
+        minimal_ir()
+        | tracks: [
+            %Track{name: :counter, type: :integer, default: 42}
+          ]
+      }
+
+      config = %ModelConfig{init: %{counter: 1}}
+
+      {:ok, ss} = BuildStateSpace.run(ir, config)
+      counter_var = Enum.find(ss.variables, &(&1.name == "counter"))
+      assert counter_var.init == "1"
     end
   end
 
@@ -248,14 +276,14 @@ defmodule Accord.Pass.TLA.BuildStateSpaceTest do
       ir = %{
         minimal_ir()
         | tracks: [
-            %Track{name: :x, type: :integer, default: 7}
+            %Track{name: :x, type: :integer, default: 1}
           ]
       }
 
       {:ok, ss} = BuildStateSpace.run(ir, default_config())
 
       assert ss.init =~ ~s(state = "ready")
-      assert ss.init =~ "x = 7"
+      assert ss.init =~ "x = 1"
     end
   end
 end

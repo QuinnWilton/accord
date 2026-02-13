@@ -27,6 +27,7 @@ defmodule Accord.Pass.TLA.BuildStateSpace do
       Enum.map(ir.tracks, fn track ->
         domain = ModelConfig.resolve_domain(config, track.name, track.type)
         type_str = ModelConfig.domain_to_tla(domain)
+        init_value = ModelConfig.resolve_init(config, track.name, track.default)
 
         # Include NULL in the type set when the track can be nil.
         type_str =
@@ -36,10 +37,12 @@ defmodule Accord.Pass.TLA.BuildStateSpace do
             type_str
           end
 
+        validate_init!(track.name, init_value, domain)
+
         %{
           name: Atom.to_string(track.name),
           type: type_str,
-          init: value_to_tla(track.default)
+          init: value_to_tla(init_value)
         }
       end)
 
@@ -96,6 +99,24 @@ defmodule Accord.Pass.TLA.BuildStateSpace do
     elements = Enum.map_join(states, ", ", &~s("#{&1}"))
     "{#{elements}}"
   end
+
+  defp validate_init!(track_name, init_value, domain) do
+    unless value_in_domain?(init_value, domain) do
+      raise ArgumentError,
+            "track :#{track_name} default #{inspect(init_value)} is outside " <>
+              "its model domain #{inspect_domain(domain)} — " <>
+              "add init: %{#{track_name}: <value>} to your model config"
+    end
+  end
+
+  defp value_in_domain?(nil, _domain), do: true
+  defp value_in_domain?(value, %Range{} = range) when is_integer(value), do: value in range
+  defp value_in_domain?(value, list) when is_list(list), do: value in list
+  defp value_in_domain?(_value, {:model_values, _}), do: true
+  defp value_in_domain?(_value, _domain), do: true
+
+  defp inspect_domain(%Range{first: first, last: last}), do: "#{first}..#{last}"
+  defp inspect_domain(domain), do: inspect(domain)
 
   defp value_to_tla(nil), do: "NULL"
   defp value_to_tla(true), do: "TRUE"
