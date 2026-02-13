@@ -398,7 +398,7 @@ defmodule Accord.Property.BlackjackStatemTest do
   # -- Property --
 
   property "blackjack protocol handles branching, guards, and faults correctly",
-           [:verbose, numtests: 200, max_size: 30] do
+           [numtests: 200, max_size: 30] do
     forall cmds <- commands(__MODULE__) do
       {:ok, faulty} = FaultyServer.start_link(Blackjack.Server)
       compiled = Blackjack.Protocol.__compiled__()

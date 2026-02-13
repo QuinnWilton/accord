@@ -253,7 +253,7 @@ defmodule Accord.Property.CounterStatemTest do
   # -- Property --
 
   property "counter protocol monitor handles all message classes correctly",
-           [:verbose, numtests: 100, max_size: 30] do
+           [numtests: 100, max_size: 30] do
     forall cmds <- commands(__MODULE__) do
       # Start fresh server + monitor for each test run.
       {:ok, faulty} = FaultyServer.start_link(Counter.Server)
