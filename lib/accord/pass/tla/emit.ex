@@ -28,23 +28,26 @@ defmodule Accord.Pass.TLA.Emit do
         names -> ["CONSTANTS #{Enum.join(names, ", ")}", ""]
       end
 
-    sections = [
-      "---- MODULE #{ss.module_name} ----",
-      "EXTENDS Integers, Sequences, TLC",
-      ""
-    ] ++ constants_decl ++ [
-      "VARIABLES #{vars_decl}",
-      "",
-      "vars == <<#{vars_decl}>>",
-      "",
-      render_tla_section("Type invariant", ss.type_invariant),
-      render_tla_section("Init predicate", ss.init),
-      render_tla_actions(actions),
-      render_tla_next(actions),
-      render_tla_spec(actions),
-      render_tla_properties(properties),
-      "===="
-    ]
+    sections =
+      [
+        "---- MODULE #{ss.module_name} ----",
+        "EXTENDS Integers, Sequences, TLC",
+        ""
+      ] ++
+        constants_decl ++
+        [
+          "VARIABLES #{vars_decl}",
+          "",
+          "vars == <<#{vars_decl}>>",
+          "",
+          render_tla_section("Type invariant", ss.type_invariant),
+          render_tla_section("Init predicate", ss.init),
+          render_tla_actions(actions),
+          render_tla_next(actions),
+          render_tla_spec(actions),
+          render_tla_properties(properties),
+          "===="
+        ]
 
     Enum.join(sections, "\n") <> "\n"
   end
@@ -63,33 +66,24 @@ defmodule Accord.Pass.TLA.Emit do
   end
 
   defp render_tla_action(%Action{} = action) do
-    lines = []
+    comment = if action.comment, do: ["\\* #{action.comment}"], else: []
 
-    # Comment.
-    lines = if action.comment, do: lines ++ ["\\* #{action.comment}"], else: lines
+    # Build the action body declaratively.
+    preconditions = Enum.map(action.preconditions, &"/\\ #{&1}")
 
-    # Build the action body.
-    body_parts = []
+    primed =
+      action.primed
+      |> Enum.sort_by(fn {k, _} -> k end)
+      |> Enum.map(fn {var, expr} -> "/\\ #{var}' = #{expr}" end)
 
-    # Preconditions.
-    body_parts = body_parts ++ Enum.map(action.preconditions, &"/\\ #{&1}")
-
-    # Primed assignments.
-    body_parts =
-      body_parts ++
-        (action.primed
-         |> Enum.sort_by(fn {k, _} -> k end)
-         |> Enum.map(fn {var, expr} -> "/\\ #{var}' = #{expr}" end))
-
-    # UNCHANGED.
-    body_parts =
+    unchanged =
       case action.unchanged do
-        [] -> body_parts
-        [single] -> body_parts ++ ["/\\ UNCHANGED #{single}"]
-        multiple -> body_parts ++ ["/\\ UNCHANGED <<#{Enum.join(multiple, ", ")}>>"]
+        [] -> []
+        [single] -> ["/\\ UNCHANGED #{single}"]
+        multiple -> ["/\\ UNCHANGED <<#{Enum.join(multiple, ", ")}>>"]
       end
 
-    # Wrap in existential quantification if needed.
+    body_parts = preconditions ++ primed ++ unchanged
     body = Enum.map_join(body_parts, "\n    ", & &1)
 
     action_def =
@@ -106,7 +100,7 @@ defmodule Accord.Pass.TLA.Emit do
           "#{action.name} ==\n  \\E #{quantifiers} :\n    #{body}"
       end
 
-    lines = lines ++ [action_def]
+    lines = comment ++ [action_def]
     Enum.join(lines, "\n") <> "\n"
   end
 
