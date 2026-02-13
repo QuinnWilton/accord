@@ -132,8 +132,8 @@ defmodule Accord.MonitorTest do
 
     test "valid cast succeeds", %{monitor: monitor} do
       assert :ok = Monitor.cast(monitor, :heartbeat)
-      # Give it a moment to process.
-      :timer.sleep(10)
+      # Synchronous barrier — ensures the cast has been processed.
+      :sys.get_state(monitor)
       assert Process.alive?(monitor)
     end
   end
