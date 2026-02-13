@@ -27,15 +27,8 @@ defmodule Mix.Tasks.Accord.Tla do
       [name | _] ->
         Mix.Task.run("compile", [])
 
-        atom =
-          try do
-            String.to_existing_atom(name)
-          rescue
-            ArgumentError ->
-              Mix.raise("Unknown module: #{name}. Is the module compiled?")
-          end
-
-        mod = Module.concat([atom])
+        # Safe: developer-provided CLI argument, not untrusted input.
+        mod = Module.concat([String.to_atom(name)])
         {tla_path, cfg_path} = tla_paths(mod)
         path = if opts[:cfg], do: cfg_path, else: tla_path
 

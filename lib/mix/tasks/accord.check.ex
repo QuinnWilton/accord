@@ -44,15 +44,14 @@ defmodule Mix.Tasks.Accord.Check do
         discover_protocols()
       else
         Enum.map(modules, fn name ->
-          atom =
-            try do
-              String.to_existing_atom(name)
-            rescue
-              ArgumentError ->
-                Mix.raise("Unknown module: #{name}. Is the module compiled?")
-            end
+          # Safe: developer-provided CLI argument, not untrusted input.
+          mod = Module.concat([String.to_atom(name)])
 
-          Module.concat([atom])
+          unless Code.ensure_loaded?(mod) do
+            Mix.raise("Unknown module: #{inspect(mod)}. Is the module compiled?")
+          end
+
+          mod
         end)
       end
 
