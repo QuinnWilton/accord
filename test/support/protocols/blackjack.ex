@@ -6,7 +6,7 @@ defmodule Accord.Test.Blackjack.Protocol do
   (still playing) or :resolved (bust), and reveal has three possible
   outcomes. Guards enforce that bets don't exceed balance.
   """
-  use Accord.Protocol
+  use Accord.Protocol, model: "test/support/protocols/blackjack_model.exs"
 
   initial :waiting
 
