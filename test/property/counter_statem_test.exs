@@ -252,26 +252,55 @@ defmodule Accord.Property.CounterStatemTest do
 
   # -- Property --
 
-  property "counter protocol monitor handles all message classes correctly",
-    numtests: 100,
-    max_size: 30 do
-    forall cmds <- commands(__MODULE__) do
-      # Start fresh server + monitor for each test run.
-      {:ok, faulty} = FaultyServer.start_link(Counter.Server)
-      compiled = Counter.Protocol.__compiled__()
-      {:ok, monitor} = Monitor.start_link(compiled, upstream: faulty, violation_policy: :log)
+  @tag :property
+  test "counter protocol monitor handles all message classes correctly" do
+    result =
+      quickcheck(
+        forall cmds <- commands(__MODULE__) do
+          Accord.Test.ViolationCollector.init()
 
-      Process.put(:test_monitor, monitor)
-      Process.put(:test_faulty_server, faulty)
+          # Start fresh server + monitor for each test run.
+          {:ok, faulty} = FaultyServer.start_link(Counter.Server)
+          compiled = Counter.Protocol.__compiled__()
 
-      {history, _state, result} = run_commands(__MODULE__, cmds)
+          {:ok, monitor} =
+            Monitor.start_link(compiled,
+              upstream: faulty,
+              violation_policy: {Accord.Test.ViolationCollector, :handle}
+            )
 
-      # Cleanup.
-      if Process.alive?(monitor), do: GenServer.stop(monitor, :normal, 100)
-      if Process.alive?(faulty), do: GenServer.stop(faulty, :normal, 100)
+          Process.put(:test_monitor, monitor)
+          Process.put(:test_faulty_server, faulty)
 
-      (result == :ok)
-      |> when_fail(Accord.Violation.Report.print_failure(history, compiled))
+          {history, _state, result} = run_commands(__MODULE__, cmds)
+
+          prop_violations = Accord.Test.ViolationCollector.property_violations()
+
+          # Cleanup.
+          if Process.alive?(monitor), do: GenServer.stop(monitor, :normal, 100)
+          if Process.alive?(faulty), do: GenServer.stop(faulty, :normal, 100)
+
+          passed = result == :ok and prop_violations == []
+
+          unless passed do
+            Process.put(
+              :__accord_property_failure__,
+              Accord.PropertyFailure.exception(
+                history: history,
+                compiled: compiled,
+                violations: prop_violations
+              )
+            )
+          end
+
+          passed
+        end,
+        [:quiet, numtests: 100, max_size: 30]
+      )
+
+    unless result == true do
+      raise Process.get(:__accord_property_failure__) ||
+              ExUnit.AssertionError.exception(message: "Property failed")
     end
   end
 end

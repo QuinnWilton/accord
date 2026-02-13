@@ -347,9 +347,7 @@ defmodule Accord.Property.LockStatemTest do
           if Process.alive?(monitor), do: GenServer.stop(monitor, :normal, 100)
           if Process.alive?(faulty), do: GenServer.stop(faulty, :normal, 100)
 
-          passed = result == :ok and prop_violations == []
-
-          unless passed do
+          if result != :ok or prop_violations != [] do
             Process.put(
               :__accord_property_failure__,
               Accord.PropertyFailure.exception(
@@ -360,7 +358,7 @@ defmodule Accord.Property.LockStatemTest do
             )
           end
 
-          passed
+          result == :ok and prop_violations == []
         end,
         [:quiet, numtests: 200, max_size: 30]
       )
