@@ -123,13 +123,11 @@ defmodule Accord.Pass.TLA.BuildActions do
     {reply_existentials, update_bindings} =
       build_update_bindings(transition, branch, existential_vars, config)
 
-    existential_vars = existential_vars ++ reply_existentials
-
     # Constraint precondition from where clause.
     {constraint_existentials, constraint_precondition} =
       build_constraint(branch, reply_existentials, config)
 
-    existential_vars = existential_vars ++ constraint_existentials
+    existential_vars = existential_vars ++ reply_existentials ++ constraint_existentials
 
     # Track updates from update AST.
     track_primed = build_track_primed(transition, branch, state_space, update_bindings)
@@ -448,14 +446,17 @@ defmodule Accord.Pass.TLA.BuildActions do
 
   # Creates existential vars for reply parameters.
   defp build_reply_existentials(params, types, config) do
-    params
-    |> Enum.zip(types)
-    |> Enum.reduce({[], %{}}, fn {name, type}, {vars_acc, bindings_acc} ->
-      tla_var = "reply_#{name}"
-      domain = ModelConfig.resolve_domain(config, name, type)
-      domain_tla = ModelConfig.domain_to_tla(domain)
-      {vars_acc ++ [{tla_var, domain_tla}], Map.put(bindings_acc, name, tla_var)}
-    end)
+    {vars_rev, bindings} =
+      params
+      |> Enum.zip(types)
+      |> Enum.reduce({[], %{}}, fn {name, type}, {vars_acc, bindings_acc} ->
+        tla_var = "reply_#{name}"
+        domain = ModelConfig.resolve_domain(config, name, type)
+        domain_tla = ModelConfig.domain_to_tla(domain)
+        {[{tla_var, domain_tla} | vars_acc], Map.put(bindings_acc, name, tla_var)}
+      end)
+
+    {Enum.reverse(vars_rev), bindings}
   end
 
   # Builds primed assignments for correspondence counter variables.
