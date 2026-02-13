@@ -4,7 +4,7 @@ defmodule Accord.TLA.GuardCompiler do
 
   Walks the quoted AST from `Macro.escape/1` and emits TLA+ expression
   strings. Supports a subset of Elixir operators and functions that have
-  direct TLA+ equivalents. Unsupported forms emit `TRUE` with a warning.
+  direct TLA+ equivalents. Unsupported forms raise `CompileError`.
 
   ## Supported forms
 
@@ -37,7 +37,6 @@ defmodule Accord.TLA.GuardCompiler do
   """
 
   @type warning :: %{message: String.t(), ast: Macro.t()}
-  @type result :: {:ok, String.t()} | {:partial, String.t(), [warning()]}
 
   @comparison_ops [:>, :>=, :<, :<=, :==, :!=]
   @arithmetic_ops [:+, :-, :*]
@@ -45,17 +44,25 @@ defmodule Accord.TLA.GuardCompiler do
   @doc """
   Compiles a quoted Elixir expression to a TLA+ expression string.
 
-  Returns `{:ok, tla_string}` if the entire expression was compiled,
-  or `{:partial, tla_string, warnings}` if some sub-expressions were
-  replaced with `TRUE`.
+  Returns `{:ok, tla_string}` on success. Raises `CompileError` if any
+  sub-expression cannot be compiled to TLA+.
   """
-  @spec compile(Macro.t(), map()) :: result()
+  @spec compile(Macro.t(), map()) :: {:ok, String.t()}
   def compile(ast, bindings \\ %{}) do
     {tla, warnings} = do_compile(ast, bindings, [])
 
     case warnings do
-      [] -> {:ok, tla}
-      _ -> {:partial, tla, Enum.reverse(warnings)}
+      [] ->
+        {:ok, tla}
+
+      _ ->
+        messages =
+          warnings
+          |> Enum.reverse()
+          |> Enum.map_join("\n  ", & &1.message)
+
+        raise CompileError,
+          description: "cannot compile to TLA+:\n  #{messages}"
     end
   end
 
@@ -84,6 +91,7 @@ defmodule Accord.TLA.GuardCompiler do
        when is_atom(var) and is_atom(context) do
     case Map.get(bindings, var) do
       nil -> {Atom.to_string(var), warnings}
+      {:list_length, tla_name} -> {tla_name, warnings}
       tla_name -> {tla_name, warnings}
     end
   end
@@ -154,8 +162,18 @@ defmodule Accord.TLA.GuardCompiler do
   # -- Built-in functions --
 
   defp do_compile({:length, _meta, [arg]}, bindings, warnings) do
-    {a, warnings} = do_compile(arg, bindings, warnings)
-    {"Len(#{a})", warnings}
+    # When the argument is a list-length-abstracted variable, emit the
+    # length variable directly instead of wrapping in Len().
+    case arg do
+      {var, _, ctx} when is_atom(var) and is_atom(ctx) ->
+        case Map.get(bindings, var) do
+          {:list_length, tla_name} -> {tla_name, warnings}
+          _ -> compile_len(arg, bindings, warnings)
+        end
+
+      _ ->
+        compile_len(arg, bindings, warnings)
+    end
   end
 
   defp do_compile({:is_integer, _meta, [arg]}, bindings, warnings) do
@@ -209,5 +227,10 @@ defmodule Accord.TLA.GuardCompiler do
     }
 
     {"TRUE", [warning | warnings]}
+  end
+
+  defp compile_len(arg, bindings, warnings) do
+    {a, warnings} = do_compile(arg, bindings, warnings)
+    {"Len(#{a})", warnings}
   end
 end

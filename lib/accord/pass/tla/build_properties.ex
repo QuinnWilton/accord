@@ -37,10 +37,8 @@ defmodule Accord.Pass.TLA.BuildProperties do
     formula =
       case check.spec do
         %{ast: ast} when not is_nil(ast) ->
-          case GuardCompiler.compile(ast) do
-            {:ok, expr} -> "#{tla_name} == #{expr}"
-            {:partial, expr, _} -> "#{tla_name} == #{expr}"
-          end
+          {:ok, expr} = GuardCompiler.compile(ast)
+          "#{tla_name} == #{expr}"
 
         _ ->
           "#{tla_name} == TRUE"
@@ -61,10 +59,8 @@ defmodule Accord.Pass.TLA.BuildProperties do
     body =
       case check.spec do
         %{ast: ast} when not is_nil(ast) ->
-          case GuardCompiler.compile(ast) do
-            {:ok, expr} -> expr
-            {:partial, expr, _} -> expr
-          end
+          {:ok, expr} = GuardCompiler.compile(ast)
+          expr
 
         _ ->
           "TRUE"
@@ -93,10 +89,8 @@ defmodule Accord.Pass.TLA.BuildProperties do
     body =
       case check.spec do
         %{ast: ast} when not is_nil(ast) ->
-          case GuardCompiler.compile(ast, bindings) do
-            {:ok, expr} -> expr
-            {:partial, expr, _} -> expr
-          end
+          {:ok, expr} = GuardCompiler.compile(ast, bindings)
+          expr
 
         _ ->
           "TRUE"
@@ -165,10 +159,8 @@ defmodule Accord.Pass.TLA.BuildProperties do
     body =
       case check.spec do
         %{ast: ast} when not is_nil(ast) ->
-          case GuardCompiler.compile(ast) do
-            {:ok, expr} -> expr
-            {:partial, expr, _} -> expr
-          end
+          {:ok, expr} = GuardCompiler.compile(ast)
+          expr
 
         _ ->
           "FALSE"

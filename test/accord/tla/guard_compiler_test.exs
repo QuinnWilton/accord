@@ -216,13 +216,15 @@ defmodule Accord.TLA.GuardCompilerTest do
   end
 
   describe "unsupported forms" do
-    test "function call returns TRUE with warning" do
+    test "function call raises CompileError" do
       ast = quote(do: String.length(x))
-      assert {:partial, "TRUE", [warning]} = GuardCompiler.compile(ast)
-      assert warning.message =~ "not compilable to TLA+"
+
+      assert_raise CompileError, ~r/cannot compile to TLA\+/, fn ->
+        GuardCompiler.compile(ast)
+      end
     end
 
-    test "case expression returns TRUE with warning" do
+    test "case expression raises CompileError" do
       ast =
         quote(
           do:
@@ -232,20 +234,25 @@ defmodule Accord.TLA.GuardCompilerTest do
             end
         )
 
-      assert {:partial, "TRUE", [warning]} = GuardCompiler.compile(ast)
-      assert warning.message =~ "not compilable to TLA+"
+      assert_raise CompileError, ~r/cannot compile to TLA\+/, fn ->
+        GuardCompiler.compile(ast)
+      end
     end
 
-    test "unsupported sub-expression in valid context" do
+    test "unsupported sub-expression in valid context raises CompileError" do
       ast = quote(do: some_func(x) > 0)
-      assert {:partial, "TRUE > 0", [warning]} = GuardCompiler.compile(ast)
-      assert warning.message =~ "not compilable to TLA+"
+
+      assert_raise CompileError, ~r/cannot compile to TLA\+/, fn ->
+        GuardCompiler.compile(ast)
+      end
     end
 
-    test "pipe operator returns TRUE with warning" do
+    test "pipe operator raises CompileError" do
       ast = quote(do: x |> String.length())
-      assert {:partial, "TRUE", [warning]} = GuardCompiler.compile(ast)
-      assert warning.message =~ "not compilable to TLA+"
+
+      assert_raise CompileError, ~r/cannot compile to TLA\+/, fn ->
+        GuardCompiler.compile(ast)
+      end
     end
   end
 
