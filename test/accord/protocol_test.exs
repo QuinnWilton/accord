@@ -217,6 +217,38 @@ defmodule Accord.ProtocolTest do
     end
   end
 
+  describe "__compiled__/0 and Monitor module" do
+    test "generates __compiled__/0" do
+      compiled = SimpleProtocol.__compiled__()
+      assert %Accord.Monitor.Compiled{} = compiled
+      assert compiled.ir.name == SimpleProtocol
+      assert is_map(compiled.transition_table.table)
+      assert is_map(compiled.track_init)
+    end
+
+    test "generates nested Monitor module" do
+      assert Code.ensure_loaded?(SimpleProtocol.Monitor)
+      assert function_exported?(SimpleProtocol.Monitor, :start_link, 1)
+      assert function_exported?(SimpleProtocol.Monitor, :child_spec, 1)
+    end
+  end
+
+  describe "validation — compile-time errors" do
+    test "undefined goto target raises CompileError" do
+      assert_raise CompileError, ~r/undefined state reference/, fn ->
+        defmodule BadGotoTarget do
+          use Accord.Protocol
+
+          initial(:ready)
+
+          state :ready do
+            on(:ping, reply: :pong, goto: :nonexistent)
+          end
+        end
+      end
+    end
+  end
+
   describe "compile-time errors" do
     test "missing initial state raises CompileError" do
       assert_raise CompileError, ~r/must declare `initial :state`/, fn ->

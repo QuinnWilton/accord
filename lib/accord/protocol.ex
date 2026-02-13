@@ -273,6 +273,9 @@ defmodule Accord.Protocol do
     initial = Module.get_attribute(env.module, :accord_initial)
     states_raw = Module.get_attribute(env.module, :accord_states) |> Enum.reverse()
     anystate_raw = Module.get_attribute(env.module, :accord_anystate) |> Enum.reverse()
+    roles_raw = Module.get_attribute(env.module, :accord_roles) |> Enum.reverse()
+    tracks_raw = Module.get_attribute(env.module, :accord_tracks) |> Enum.reverse()
+    properties_raw = Module.get_attribute(env.module, :accord_properties) |> Enum.reverse()
 
     if is_nil(initial) do
       raise CompileError,
@@ -290,14 +293,97 @@ defmodule Accord.Protocol do
       name: env.module,
       source_file: env.file,
       initial: initial,
+      roles: roles_raw,
+      tracks: tracks_raw,
       states: states,
-      anystate: anystate_raw
+      anystate: anystate_raw,
+      properties: properties_raw
+    }
+
+    # Run validation pipeline.
+    ir =
+      case compile_ir(ir, env) do
+        {:ok, validated_ir} -> validated_ir
+        # compile_ir raises on error, so this is defensive.
+        {:error, _} -> ir
+      end
+
+    # Build runtime artifacts.
+    {:ok, table} = Accord.Pass.BuildTransitionTable.run(ir)
+    {:ok, track_init} = Accord.Pass.BuildTrackInit.run(ir)
+
+    compiled = %Accord.Monitor.Compiled{
+      ir: ir,
+      transition_table: table,
+      track_init: track_init
     }
 
     escaped_ir = Macro.escape(ir)
+    escaped_compiled = Macro.escape(compiled)
+    monitor_module = Module.concat(env.module, Monitor)
 
     quote do
       def __ir__, do: unquote(escaped_ir)
+      def __compiled__, do: unquote(escaped_compiled)
+
+      defmodule unquote(monitor_module) do
+        @moduledoc """
+        Runtime monitor for `#{inspect(unquote(env.module))}`.
+
+        Thin wrapper around `Accord.Monitor` with compiled protocol data baked in.
+        """
+
+        @compiled unquote(escaped_compiled)
+
+        def start_link(opts) do
+          Accord.Monitor.start_link(@compiled, opts)
+        end
+
+        def child_spec(opts) do
+          %{
+            id: __MODULE__,
+            start: {__MODULE__, :start_link, [opts]}
+          }
+        end
+      end
+    end
+  end
+
+  defp compile_ir(ir, env) do
+    alias Accord.Pass
+
+    with {:ok, ir} <- Pass.RefineSpans.run(ir),
+         {:ok, ir} <- run_pass(Pass.ValidateStructure, ir, env),
+         {:ok, ir} <- run_pass(Pass.ValidateTypes, ir, env),
+         {:ok, ir} <- run_pass(Pass.ValidateDeterminism, ir, env) do
+      {:ok, ir}
+    end
+  end
+
+  defp run_pass(pass_module, ir, env) do
+    case pass_module.run(ir) do
+      {:ok, ir} ->
+        {:ok, ir}
+
+      {:error, reports} ->
+        message =
+          reports
+          |> Enum.map(fn report ->
+            source =
+              if ir.source_file && File.exists?(ir.source_file) do
+                Pentiment.Source.from_file(ir.source_file)
+              else
+                nil
+              end
+
+            Pentiment.format(report, source)
+          end)
+          |> Enum.join("\n\n")
+
+        raise CompileError,
+          description: message,
+          file: env.file,
+          line: env.line
     end
   end
 
