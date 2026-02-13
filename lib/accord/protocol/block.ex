@@ -10,9 +10,45 @@ defmodule Accord.Protocol.Block do
   defmacro reply(type_spec) do
     reply_type = Accord.Protocol.parse_reply_spec(type_spec)
     escaped = Macro.escape(reply_type)
+    line = __CALLER__.line
+    pattern = Macro.to_string(type_spec)
 
     quote do
       Module.put_attribute(__MODULE__, :accord_on_reply_type, unquote(escaped))
+
+      Module.put_attribute(
+        __MODULE__,
+        :accord_on_reply_span,
+        Pentiment.Span.search(line: unquote(line), pattern: unquote(pattern))
+      )
+    end
+  end
+
+  @doc false
+  defmacro reply(type_spec, opts) do
+    reply_type = Accord.Protocol.parse_reply_spec(type_spec)
+    escaped = Macro.escape(reply_type)
+    line = __CALLER__.line
+    pattern = Macro.to_string(type_spec)
+
+    where_fn = Keyword.get(opts, :where)
+    escaped_where = if where_fn, do: Macro.escape(where_fn)
+
+    quote do
+      Module.put_attribute(__MODULE__, :accord_on_reply_type, unquote(escaped))
+
+      Module.put_attribute(
+        __MODULE__,
+        :accord_on_reply_span,
+        Pentiment.Span.search(line: unquote(line), pattern: unquote(pattern))
+      )
+
+      if unquote(where_fn) do
+        Module.put_attribute(__MODULE__, :accord_on_reply_constraint, %{
+          fun: unquote(where_fn),
+          ast: unquote(escaped_where)
+        })
+      end
     end
   end
 
@@ -26,11 +62,13 @@ defmodule Accord.Protocol.Block do
   @doc false
   defmacro guard(func) do
     escaped_ast = Macro.escape(func)
+    line = __CALLER__.line
 
     quote do
       Module.put_attribute(__MODULE__, :accord_on_guard, %{
         fun: unquote(func),
-        ast: unquote(escaped_ast)
+        ast: unquote(escaped_ast),
+        span: Pentiment.Span.search(line: unquote(line), pattern: "guard")
       })
     end
   end
@@ -52,6 +90,7 @@ defmodule Accord.Protocol.Block do
     next_state = Keyword.fetch!(opts, :goto)
     reply_type = Accord.Protocol.parse_reply_spec(reply_spec)
     escaped = Macro.escape(reply_type)
+    line = __CALLER__.line
 
     quote do
       branches = Module.get_attribute(__MODULE__, :accord_on_branches)
@@ -59,7 +98,14 @@ defmodule Accord.Protocol.Block do
       Module.put_attribute(
         __MODULE__,
         :accord_on_branches,
-        [%Branch{reply_type: unquote(escaped), next_state: unquote(next_state)} | branches]
+        [
+          %Branch{
+            reply_type: unquote(escaped),
+            next_state: unquote(next_state),
+            span: Pentiment.Span.search(line: unquote(line), pattern: "branch")
+          }
+          | branches
+        ]
       )
     end
   end

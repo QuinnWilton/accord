@@ -252,14 +252,20 @@ defmodule Accord.Protocol do
       end
   """
   defmacro on(message_spec, do: block) do
-    {message_pattern, message_types} = parse_message_spec(message_spec)
+    {message_pattern, message_types, message_arg_names, message_arg_spans} =
+      parse_message_spec(message_spec)
+
     escaped_types = Macro.escape(message_types)
+    escaped_arg_names = Macro.escape(message_arg_names)
+    escaped_arg_spans = Macro.escape(message_arg_spans)
     span = span_ast(__CALLER__)
 
     quote do
       import Accord.Protocol.Block
 
       Module.put_attribute(__MODULE__, :accord_on_reply_type, nil)
+      Module.put_attribute(__MODULE__, :accord_on_reply_constraint, nil)
+      Module.put_attribute(__MODULE__, :accord_on_reply_span, nil)
       Module.put_attribute(__MODULE__, :accord_on_goto, nil)
       Module.put_attribute(__MODULE__, :accord_on_guard, nil)
       Module.put_attribute(__MODULE__, :accord_on_update, nil)
@@ -268,6 +274,8 @@ defmodule Accord.Protocol do
       unquote(block)
 
       reply_type = Module.get_attribute(__MODULE__, :accord_on_reply_type)
+      reply_constraint = Module.get_attribute(__MODULE__, :accord_on_reply_constraint)
+      reply_span = Module.get_attribute(__MODULE__, :accord_on_reply_span)
       goto_state = Module.get_attribute(__MODULE__, :accord_on_goto)
       guard_pair = Module.get_attribute(__MODULE__, :accord_on_guard)
       update_pair = Module.get_attribute(__MODULE__, :accord_on_update)
@@ -283,7 +291,12 @@ defmodule Accord.Protocol do
           next = if in_anystate, do: :__same__, else: goto_state
 
           if reply_type do
-            [%Branch{reply_type: reply_type, next_state: next || :__same__, span: unquote(span)}]
+            [%Branch{
+              reply_type: reply_type,
+              next_state: next || :__same__,
+              constraint: reply_constraint,
+              span: reply_span || unquote(span)
+            }]
           else
             []
           end
@@ -292,6 +305,8 @@ defmodule Accord.Protocol do
       transition = %Transition{
         message_pattern: unquote(message_pattern),
         message_types: unquote(escaped_types),
+        message_arg_names: unquote(escaped_arg_names),
+        message_arg_spans: unquote(escaped_arg_spans),
         kind: :call,
         branches: branches,
         guard: guard_pair,
@@ -307,6 +322,8 @@ defmodule Accord.Protocol do
       end
 
       Module.delete_attribute(__MODULE__, :accord_on_reply_type)
+      Module.delete_attribute(__MODULE__, :accord_on_reply_constraint)
+      Module.delete_attribute(__MODULE__, :accord_on_reply_span)
       Module.delete_attribute(__MODULE__, :accord_on_goto)
       Module.delete_attribute(__MODULE__, :accord_on_guard)
       Module.delete_attribute(__MODULE__, :accord_on_update)
@@ -320,10 +337,14 @@ defmodule Accord.Protocol do
     reply_spec = Keyword.fetch!(opts, :reply)
     next_state = Keyword.get(opts, :goto)
 
-    {message_pattern, message_types} = parse_message_spec(message_spec)
+    {message_pattern, message_types, message_arg_names, message_arg_spans} =
+      parse_message_spec(message_spec)
+
     reply_type = parse_reply_spec(reply_spec)
 
     escaped_types = Macro.escape(message_types)
+    escaped_arg_names = Macro.escape(message_arg_names)
+    escaped_arg_spans = Macro.escape(message_arg_spans)
     escaped_reply_type = Macro.escape(reply_type)
 
     span = span_ast(__CALLER__)
@@ -344,6 +365,8 @@ defmodule Accord.Protocol do
         transition = %Transition{
           message_pattern: unquote(message_pattern),
           message_types: unquote(escaped_types),
+          message_arg_names: unquote(escaped_arg_names),
+          message_arg_spans: unquote(escaped_arg_spans),
           kind: :call,
           branches: [
             %Branch{
@@ -367,6 +390,8 @@ defmodule Accord.Protocol do
         transition = %Transition{
           message_pattern: unquote(message_pattern),
           message_types: unquote(escaped_types),
+          message_arg_names: unquote(escaped_arg_names),
+          message_arg_spans: unquote(escaped_arg_spans),
           kind: :call,
           branches: [
             %Branch{
@@ -388,7 +413,8 @@ defmodule Accord.Protocol do
   Defines a cast (async fire-and-forget, no reply).
   """
   defmacro cast(message_spec) do
-    {message_pattern, message_types} = parse_message_spec(message_spec)
+    {message_pattern, message_types, _message_arg_names, _message_arg_spans} =
+      parse_message_spec(message_spec)
     escaped_types = Macro.escape(message_types)
     span = span_ast(__CALLER__)
 
@@ -679,14 +705,13 @@ defmodule Accord.Protocol do
   end
 
   defp write_tla_files(module_name, result, _env) do
-    # Derive path from module name: Lock.Protocol → lock/protocol.
-    path_parts =
-      module_name
-      |> Module.split()
-      |> Enum.map(&Macro.underscore/1)
+    # Derive path from module name: Lock.Protocol → lock/Protocol.
+    # The file base name must match the TLA+ MODULE name (PascalCase).
+    parts = Module.split(module_name)
+    dir_parts = parts |> Enum.slice(0..-2//1) |> Enum.map(&Macro.underscore/1)
 
-    base_dir = Path.join([Mix.Project.build_path(), "accord" | Enum.slice(path_parts, 0..-2//1)])
-    base_name = List.last(path_parts)
+    base_dir = Path.join([Mix.Project.build_path(), "accord" | dir_parts])
+    base_name = List.last(parts)
 
     File.mkdir_p!(base_dir)
     File.write!(Path.join(base_dir, "#{base_name}.tla"), result.tla)
@@ -725,7 +750,15 @@ defmodule Accord.Protocol do
     Enum.map_reduce(transitions, acc, fn transition, acc ->
       {guard, acc} = lift_fun_pair(transition.guard, module, acc)
       {update, acc} = lift_fun_pair(transition.update, module, acc)
-      {%{transition | guard: guard, update: update}, acc}
+      {branches, acc} = lift_branch_list(transition.branches, module, acc)
+      {%{transition | guard: guard, update: update, branches: branches}, acc}
+    end)
+  end
+
+  defp lift_branch_list(branches, module, acc) do
+    Enum.map_reduce(branches, acc, fn branch, acc ->
+      {constraint, acc} = lift_fun_pair(branch.constraint, module, acc)
+      {%{branch | constraint: constraint}, acc}
     end)
   end
 
@@ -807,10 +840,10 @@ defmodule Accord.Protocol do
   # -- Message Spec Parsing --
 
   @doc false
-  def parse_message_spec(spec) when is_atom(spec), do: {spec, []}
+  def parse_message_spec(spec) when is_atom(spec), do: {spec, [], [], []}
 
   # Variable reference (bare atom at macro time).
-  def parse_message_spec({tag, _, nil}) when is_atom(tag), do: {tag, []}
+  def parse_message_spec({tag, _, nil}) when is_atom(tag), do: {tag, [], [], []}
 
   # Tuple with 3+ elements: {:{}, _, elements}
   def parse_message_spec({:{}, _, elements}), do: parse_tuple_message(elements)
@@ -829,11 +862,18 @@ defmodule Accord.Protocol do
         name when is_atom(name) -> name
       end
 
-    types =
+    parsed =
       Enum.map(rest, fn
-        {:"::", _, [_name, type_ast]} -> IR.Type.parse(type_ast)
-        type_ast -> IR.Type.parse(type_ast)
+        {:"::", _, [{name, _, _}, type_ast]} when is_atom(name) ->
+          {IR.Type.parse(type_ast), Atom.to_string(name), type_span(type_ast)}
+
+        type_ast ->
+          {IR.Type.parse(type_ast), nil, nil}
       end)
+
+    types = Enum.map(parsed, &elem(&1, 0))
+    arg_names = Enum.map(parsed, &elem(&1, 1))
+    arg_spans = Enum.map(parsed, &elem(&1, 2))
 
     pattern =
       case length(types) do
@@ -842,8 +882,20 @@ defmodule Accord.Protocol do
         _ -> {:{}, [], [tag_value | List.duplicate(:_, length(types))]}
       end
 
-    {pattern, types}
+    {pattern, types, arg_names, arg_spans}
   end
+
+  defp type_span({_, meta, _} = type_ast) when is_list(meta) do
+    case Keyword.get(meta, :line) do
+      nil ->
+        nil
+
+      line ->
+        %Pentiment.Span.Search{line: line, pattern: Macro.to_string(type_ast)}
+    end
+  end
+
+  defp type_span(_), do: nil
 
   @doc false
   def parse_reply_spec(spec) when is_atom(spec), do: {:literal, spec}
@@ -900,7 +952,8 @@ defmodule Accord.Protocol do
 
   # -- Span Helpers --
 
-  defp span_ast(caller) do
+  @doc false
+  def span_ast(caller) do
     meta = [line: caller.line]
 
     meta =
