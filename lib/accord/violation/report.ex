@@ -16,7 +16,7 @@ defmodule Accord.Violation.Report do
 
   ## In property tests
 
-      Accord.Violation.Report.print_failure(history, compiled)
+      report = Accord.Violation.Report.failure_report(history, compiled)
   """
 
   alias Accord.IR.Type
@@ -65,24 +65,29 @@ defmodule Accord.Violation.Report do
   end
 
   @doc """
-  Prints failure diagnostics for a property test.
+  Builds a failure report string for a property test.
 
   Extracts the last history entry and, if it contains an accord violation,
-  formats it as a pentiment diagnostic. Also prints a simplified step
+  formats it as a pentiment diagnostic. Also builds a simplified step
   summary showing the protocol state progression.
 
   Falls back to `inspect` for non-violation failures.
   """
-  @spec print_failure(list(), Compiled.t()) :: :ok
-  def print_failure(history, %Compiled{} = compiled) do
+  @spec failure_report(list(), Compiled.t(), [Violation.t()]) :: String.t()
+  def failure_report(history, compiled, property_violations \\ [])
+
+  def failure_report(history, %Compiled{} = compiled, property_violations) do
     output = format_failure(history, compiled)
 
-    # PropCheck's when_fail fires both on the initial failure and again
-    # when verifying the shrunk counter-example. Deduplicate by comparing
-    # against the previously printed output.
-    if Process.get(:__accord_last_failure__) != output do
-      Process.put(:__accord_last_failure__, output)
-      IO.puts(output)
+    case property_violations do
+      [] ->
+        output
+
+      violations ->
+        formatted =
+          Enum.map_join(violations, "\n", fn v -> "  " <> format(v, compiled) end)
+
+        output <> "\n\nProperty violations detected during run:\n" <> formatted
     end
   end
 
@@ -176,6 +181,9 @@ defmodule Accord.Violation.Report do
   defp label_message(:invalid_reply), do: "transition defined here"
   defp label_message(:argument_type), do: "type constraint defined here"
   defp label_message(:guard_failed), do: "guarded transition defined here"
+  defp label_message(:invariant_violated), do: "property defined here"
+  defp label_message(:action_violated), do: "property defined here"
+  defp label_message(:liveness_violated), do: "property defined here"
   defp label_message(_), do: "transition defined here"
 
   # -- Help Builders --
