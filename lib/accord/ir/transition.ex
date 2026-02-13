@@ -14,6 +14,8 @@ defmodule Accord.IR.Transition do
           to: atom() | nil,
           message_pattern: term(),
           message_types: [Accord.IR.Type.t()],
+          message_arg_names: [String.t() | nil],
+          message_arg_spans: [Pentiment.Span.t() | nil],
           kind: :call | :cast,
           branches: [Accord.IR.Branch.t()],
           guard: guard_pair() | nil,
@@ -31,6 +33,8 @@ defmodule Accord.IR.Transition do
     :update,
     :span,
     message_types: [],
+    message_arg_names: [],
+    message_arg_spans: [],
     branches: []
   ]
 end
