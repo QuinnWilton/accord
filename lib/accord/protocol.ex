@@ -540,6 +540,7 @@ defmodule Accord.Protocol do
 
     fn_defs = fn_to_defs(fn_specs)
     span_defs = build_span_defs(tla_result)
+    domains_map = build_domains_map(tla_result)
     monitor_module = Module.concat(env.module, Monitor)
     parent_module = env.module
 
@@ -551,6 +552,7 @@ defmodule Accord.Protocol do
       # These binaries are generated at compile time, never from untrusted sources.
       def __ir__, do: :erlang.binary_to_term(@accord_ir_bin)
       def __compiled__, do: :erlang.binary_to_term(@accord_compiled_bin)
+      def __tla_domains__, do: unquote(Macro.escape(domains_map))
 
       @doc false
       unquote_splicing(span_defs)
@@ -661,6 +663,13 @@ defmodule Accord.Protocol do
         []
     end
   end
+
+  # Build a map of variable name → TLA+ domain string for overflow detection.
+  defp build_domains_map({:ok, %{state_space: ss}}) do
+    Map.new(ss.variables, fn var -> {var.name, var.type} end)
+  end
+
+  defp build_domains_map(_), do: %{}
 
   defp compile_ir(ir, env) do
     alias Accord.Pass

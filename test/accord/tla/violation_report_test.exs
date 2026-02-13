@@ -1,9 +1,31 @@
+defmodule Accord.TLA.ViolationReportTest.MockProtocol do
+  @moduledoc false
+
+  # Minimal mock that exports the functions ViolationReport needs.
+  # No real source file, so rendering falls back to source-less output.
+
+  def __tla_domains__ do
+    %{
+      "state" => ~s({"accepting", "idle"}),
+      "buffer_size" => "0..3",
+      "total_enqueued" => "0..3"
+    }
+  end
+
+  def __tla_span__(_), do: nil
+
+  def __ir__ do
+    %{source_file: nil}
+  end
+end
+
 defmodule Accord.TLA.ViolationReportTest do
   use ExUnit.Case, async: true
 
   alias Accord.TLA.ViolationReport
 
   @mod Accord.Test.Lock.Protocol
+  @mock Accord.TLA.ViolationReportTest.MockProtocol
 
   setup_all do
     Code.ensure_loaded!(@mod)
@@ -153,6 +175,101 @@ defmodule Accord.TLA.ViolationReportTest do
       formatted = ViolationReport.format(violation, Enum, strict: false)
       assert is_binary(formatted)
       assert formatted =~ "invariant SomeProperty violated"
+    end
+  end
+
+  describe "TypeInvariant domain overflow hints" do
+    test "detects overflow and suggests remediation" do
+      violation = %{
+        kind: :invariant,
+        property: "TypeInvariant",
+        trace: [
+          %{
+            number: 1,
+            action: nil,
+            assignments: %{"state" => "\"idle\"", "buffer_size" => "0", "total_enqueued" => "0"}
+          },
+          %{
+            number: 2,
+            action: "EnqueueFromIdleToAccepting",
+            assignments: %{
+              "state" => "\"accepting\"",
+              "buffer_size" => "1",
+              "total_enqueued" => "4"
+            }
+          }
+        ]
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      assert formatted =~ "invariant TypeInvariant violated"
+      assert formatted =~ "outside its domain 0..3"
+      assert formatted =~ "total_enqueued"
+      assert formatted =~ "has value 4"
+      assert formatted =~ "widen the domain"
+      assert formatted =~ ".accord_model.exs"
+      assert formatted =~ "state_constraint"
+    end
+
+    test "no overflow hint when values are within set domains" do
+      violation = %{
+        kind: :invariant,
+        property: "TypeInvariant",
+        trace: [
+          %{
+            number: 1,
+            action: nil,
+            assignments: %{"state" => "\"idle\"", "buffer_size" => "2", "total_enqueued" => "3"}
+          }
+        ]
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      assert formatted =~ "invariant TypeInvariant violated"
+      refute formatted =~ "outside its domain"
+      refute formatted =~ "widen the domain"
+    end
+
+    test "no overflow hint for non-TypeInvariant violations" do
+      violation = %{
+        kind: :invariant,
+        property: "BufferAccounting",
+        trace: [
+          %{
+            number: 1,
+            action: nil,
+            assignments: %{"buffer_size" => "4", "total_enqueued" => "4"}
+          }
+        ]
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      assert formatted =~ "invariant BufferAccounting violated"
+      refute formatted =~ "outside its domain"
+      refute formatted =~ "widen the domain"
+    end
+
+    test "no overflow hint when module lacks __tla_domains__/0" do
+      violation = %{
+        kind: :invariant,
+        property: "TypeInvariant",
+        trace: [
+          %{
+            number: 1,
+            action: nil,
+            assignments: %{"counter" => "100"}
+          }
+        ]
+      }
+
+      # Enum doesn't export __tla_domains__/0.
+      formatted = ViolationReport.format(violation, Enum, strict: false)
+
+      assert formatted =~ "invariant TypeInvariant violated"
+      refute formatted =~ "outside its domain"
     end
   end
 end

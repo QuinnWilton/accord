@@ -36,6 +36,7 @@ defmodule Accord.TLA.ViolationReport do
       |> add_source_label(violation, protocol_mod, opts)
       |> add_trace_labels(violation, protocol_mod, opts)
       |> add_trace_notes(violation)
+      |> add_type_invariant_hint(violation, protocol_mod)
 
     render(report, protocol_mod)
   end
@@ -212,6 +213,94 @@ defmodule Accord.TLA.ViolationReport do
 
       Report.with_note(acc, note)
     end)
+  end
+
+  # -- TypeInvariant Overflow Detection --
+
+  # When TypeInvariant fails, check if any variable exceeded its finite domain.
+  # This is the most common root cause and the error is non-obvious without guidance.
+  defp add_type_invariant_hint(
+         report,
+         %{kind: :invariant, property: "TypeInvariant"} = violation,
+         mod
+       ) do
+    domains = fetch_domains(mod)
+    last_assignments = last_trace_assignments(violation)
+
+    overflows =
+      Enum.flat_map(last_assignments, fn {var_name, value_str} ->
+        with domain_str when is_binary(domain_str) <- Map.get(domains, var_name),
+             {lo, hi} <- parse_range_domain(domain_str),
+             value when is_integer(value) <- parse_tla_integer(value_str),
+             true <- value < lo or value > hi do
+          [{var_name, value, domain_str}]
+        else
+          _ -> []
+        end
+      end)
+
+    case overflows do
+      [] ->
+        report
+
+      _ ->
+        report
+        |> add_overflow_notes(overflows)
+        |> add_overflow_help(overflows)
+    end
+  end
+
+  defp add_type_invariant_hint(report, _violation, _mod), do: report
+
+  defp fetch_domains(mod) do
+    if function_exported?(mod, :__tla_domains__, 0) do
+      mod.__tla_domains__()
+    else
+      %{}
+    end
+  end
+
+  defp last_trace_assignments(%{trace: [_ | _] = trace}) do
+    List.last(trace).assignments
+  end
+
+  defp last_trace_assignments(_), do: %{}
+
+  defp add_overflow_notes(report, overflows) do
+    Enum.reduce(overflows, report, fn {var_name, value, domain_str}, acc ->
+      Report.with_note(
+        acc,
+        "variable '#{var_name}' has value #{value}, which is outside its domain #{domain_str}"
+      )
+    end)
+  end
+
+  defp add_overflow_help(report, overflows) do
+    Enum.reduce(overflows, report, fn {var_name, _value, _domain_str}, acc ->
+      acc
+      |> Report.with_help(
+        "widen the domain in `.accord_model.exs` — `domains: %{#{var_name}: 0..100}`"
+      )
+      |> Report.with_help(
+        "or bound exploration with a state constraint — `state_constraint: \"#{var_name} =< N\"`"
+      )
+    end)
+  end
+
+  # Parse "N..M" range domains. Returns nil for non-range domains (sets, STRING, etc.).
+  defp parse_range_domain(domain_str) do
+    case Regex.run(~r/^(-?\d+)\.\.(-?\d+)$/, domain_str) do
+      [_, lo, hi] -> {String.to_integer(lo), String.to_integer(hi)}
+      _ -> nil
+    end
+  end
+
+  # Parse a TLA+ integer value string.
+  defp parse_tla_integer(value_str) do
+    case Integer.parse(String.trim(value_str)) do
+      {n, ""} -> n
+      _ -> nil
+    end
   end
 
   # -- Rendering --
