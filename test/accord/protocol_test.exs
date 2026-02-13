@@ -543,7 +543,7 @@ defmodule Accord.ProtocolTest do
     test "properties have spans" do
       ir = PropertyProtocol.__ir__()
       [prop | _] = ir.properties
-      assert %Pentiment.Span.Position{} = prop.span
+      assert %Pentiment.Span.Search{} = prop.span
     end
 
     test "checks within properties have spans" do
@@ -568,7 +568,7 @@ defmodule Accord.ProtocolTest do
 
     test "returns spans for CamelCase property names" do
       span = PropertyProtocol.__tla_span__("MonotonicTokens")
-      assert %Pentiment.Span.Position{} = span
+      assert %Pentiment.Span.Search{} = span
     end
 
     test "returns spans for action names" do

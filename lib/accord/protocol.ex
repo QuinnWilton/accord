@@ -447,7 +447,7 @@ defmodule Accord.Protocol do
   - `forbidden fn state, tracks -> bool end` — negated invariant.
   """
   defmacro property(name, do: block) do
-    span = span_ast(__CALLER__)
+    span = span_from_name_ast(name, __CALLER__)
 
     quote do
       import Accord.Protocol.Property
@@ -911,6 +911,17 @@ defmodule Accord.Protocol do
 
     quote do
       Pentiment.Elixir.span_from_meta(unquote(meta))
+    end
+  end
+
+  # Builds a deferred search span that finds the property name atom
+  # on the declaration line at format time.
+  defp span_from_name_ast(name, caller) do
+    pattern = inspect(name)
+    line = caller.line
+
+    quote do
+      Pentiment.Span.search(line: unquote(line), pattern: unquote(pattern))
     end
   end
 end
