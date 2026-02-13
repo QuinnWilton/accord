@@ -73,11 +73,11 @@ defmodule Accord.Violation.Report do
 
   Falls back to `inspect` for non-violation failures.
   """
-  @spec failure_report(list(), Compiled.t(), [Violation.t()]) :: String.t()
-  def failure_report(history, compiled, property_violations \\ [])
+  @spec failure_report(list(), list(), Compiled.t(), [Violation.t()]) :: String.t()
+  def failure_report(history, commands, compiled, property_violations \\ [])
 
-  def failure_report(history, %Compiled{} = compiled, property_violations) do
-    output = format_failure(history, compiled)
+  def failure_report(history, commands, %Compiled{} = compiled, property_violations) do
+    output = format_failure(history, commands, compiled)
 
     case property_violations do
       [] ->
@@ -204,8 +204,8 @@ defmodule Accord.Violation.Report do
 
   # -- Failure Formatting --
 
-  defp format_failure(history, compiled) do
-    steps = format_step_summary(history)
+  defp format_failure(history, commands, compiled) do
+    steps = format_step_summary(history, commands)
 
     diagnostic =
       case List.last(history) do
@@ -224,20 +224,31 @@ defmodule Accord.Violation.Report do
 
   # -- Step Summary --
 
-  defp format_step_summary(history) do
+  defp format_step_summary(history, commands) do
+    # Strip the {:init, _} entry from the command list.
+    cmds = Enum.reject(commands, &match?({:init, _}, &1))
     count = length(history)
     header = "--- Steps (#{count}) ---\n"
 
     steps =
       history
+      |> Enum.zip(cmds)
       |> Enum.with_index(1)
-      |> Enum.map_join("\n", fn {{model, result}, idx} ->
+      |> Enum.map_join("\n", fn {{{model, result}, cmd}, idx} ->
         state = if is_map(model), do: Map.get(model, :protocol_state, "?"), else: "?"
-        "  #{idx}. :#{state} → #{format_result_brief(result)}"
+        call = format_command(cmd)
+        "  #{idx}. :#{state} #{call} → #{format_result_brief(result)}"
       end)
 
     header <> steps
   end
+
+  defp format_command({:set, _var, {:call, _mod, fun, args}}) do
+    formatted_args = Enum.map_join(args, ", ", &inspect(&1, limit: 3))
+    "#{fun}(#{formatted_args})"
+  end
+
+  defp format_command(_), do: "?"
 
   defp format_result_brief({:accord_violation, %Violation{} = v}) do
     "VIOLATION (#{v.blame}: #{v.kind})"

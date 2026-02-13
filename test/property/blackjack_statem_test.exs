@@ -431,6 +431,7 @@ defmodule Accord.Property.BlackjackStatemTest do
               :__accord_property_failure__,
               Accord.PropertyFailure.exception(
                 history: history,
+                commands: cmds,
                 compiled: compiled,
                 violations: prop_violations
               )
