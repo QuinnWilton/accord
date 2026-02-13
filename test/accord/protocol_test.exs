@@ -197,6 +197,18 @@ defmodule Accord.ProtocolTest do
     property :lock_reachable do
       reachable :locked
     end
+
+    property :ordered_acquires do
+      ordered :acquire, by: :cid
+    end
+
+    property :no_negative_token do
+      forbidden fn tracks -> tracks.fence_token < 0 end
+    end
+
+    property :lock_after_unlock do
+      precedence :locked, :unlocked
+    end
   end
 
   describe "__ir__/0 — basic structure" do
@@ -470,7 +482,7 @@ defmodule Accord.ProtocolTest do
   describe "__ir__/0 — properties" do
     test "properties are populated" do
       ir = PropertyProtocol.__ir__()
-      assert length(ir.properties) == 6
+      assert length(ir.properties) == 9
       names = Enum.map(ir.properties, & &1.name)
       assert :monotonic_tokens in names
       assert :holder_set in names
@@ -478,6 +490,9 @@ defmodule Accord.ProtocolTest do
       assert :no_starvation in names
       assert :token_bounded in names
       assert :lock_reachable in names
+      assert :ordered_acquires in names
+      assert :no_negative_token in names
+      assert :lock_after_unlock in names
     end
 
     test "action property has correct check" do
@@ -521,6 +536,7 @@ defmodule Accord.ProtocolTest do
       assert check.spec.trigger == {:in_state, :locked}
       assert check.spec.target == {:in_state, :unlocked}
       assert check.spec.fairness == :weak
+      assert check.spec.timeout == :infinity
     end
 
     test "bounded property has correct check" do
@@ -538,6 +554,35 @@ defmodule Accord.ProtocolTest do
       assert [check] = prop.checks
       assert check.kind == :reachable
       assert check.spec.target == :locked
+    end
+
+    test "ordered property has correct check" do
+      ir = PropertyProtocol.__ir__()
+      prop = Enum.find(ir.properties, &(&1.name == :ordered_acquires))
+      assert [check] = prop.checks
+      assert check.kind == :ordered
+      assert check.spec.event == :acquire
+      assert check.spec.by == :cid
+      assert check.spec.extract == %{position: 1, path: []}
+    end
+
+    test "forbidden property has correct check" do
+      ir = PropertyProtocol.__ir__()
+      prop = Enum.find(ir.properties, &(&1.name == :no_negative_token))
+      assert [check] = prop.checks
+      assert check.kind == :forbidden
+      assert is_function(check.spec.fun, 1)
+      assert check.spec.fun.(%{fence_token: -1}) == true
+      assert check.spec.fun.(%{fence_token: 0}) == false
+    end
+
+    test "precedence property has correct check" do
+      ir = PropertyProtocol.__ir__()
+      prop = Enum.find(ir.properties, &(&1.name == :lock_after_unlock))
+      assert [check] = prop.checks
+      assert check.kind == :precedence
+      assert check.spec.target == :locked
+      assert check.spec.required == :unlocked
     end
 
     test "properties have spans" do

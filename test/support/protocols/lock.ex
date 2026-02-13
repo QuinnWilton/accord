@@ -76,6 +76,22 @@ defmodule Accord.Test.Lock.Protocol do
   property :acquire_release do
     correspondence :acquire, [:release]
   end
+
+  property :token_bounded do
+    bounded :fence_token, max: 1000
+  end
+
+  property :no_negative_token do
+    forbidden fn tracks -> tracks.fence_token < 0 end
+  end
+
+  property :lock_reachable do
+    reachable :locked
+  end
+
+  property :lock_after_unlock do
+    precedence :locked, :unlocked
+  end
 end
 
 defmodule Accord.Test.Lock.Server do
