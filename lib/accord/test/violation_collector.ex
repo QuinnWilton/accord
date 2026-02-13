@@ -57,9 +57,9 @@ defmodule Accord.Test.ViolationCollector do
         :undefined ->
           []
 
+        # :ordered_set with monotonic keys — already sorted by insertion order.
         _ ->
           :ets.tab2list(@table)
-          |> Enum.sort_by(&elem(&1, 0))
           |> Enum.map(&elem(&1, 1))
       end
 
