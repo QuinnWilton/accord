@@ -183,38 +183,47 @@ defmodule Accord.Monitor do
     case Check.check_reply(reply, reply_pairs) do
       {:ok, next_state} ->
         actual_next = if next_state == :__same__, do: state, else: next_state
-        old_tracks = data.tracks
 
-        # Apply update if present.
-        new_tracks = apply_update(transition.update, message, reply, data.tracks)
-
-        # Check properties after successful transition.
-        case check_properties(message, actual_next, old_tracks, new_tracks, data) do
-          {:ok, updated_data} ->
-            updated_data = %{updated_data | tracks: new_tracks}
-            updated_data = track_visited_state(updated_data, actual_next)
-            timer_actions = liveness_actions(updated_data, actual_next)
-            {:next_state, actual_next, updated_data, [{:reply, from, reply} | timer_actions]}
-
-          {:violation, violation, updated_data} ->
-            updated_data = %{updated_data | tracks: new_tracks}
-            updated_data = track_visited_state(updated_data, actual_next)
-            timer_actions = liveness_actions(updated_data, actual_next)
-
-            handle_property_violation(
-              violation,
-              reply,
-              from,
-              actual_next,
-              updated_data,
-              timer_actions
-            )
-        end
+        apply_transition_and_check_properties(
+          transition,
+          message,
+          reply,
+          from,
+          actual_next,
+          data
+        )
 
       {:error, _reason} ->
         valid = Enum.map(transition.branches, & &1.reply_type)
         violation = Violation.invalid_reply(state, message, reply, valid)
         handle_violation(violation, from, state, data)
+    end
+  end
+
+  defp apply_transition_and_check_properties(transition, message, reply, from, next_state, data) do
+    old_tracks = data.tracks
+    new_tracks = apply_update(transition.update, message, reply, data.tracks)
+
+    case check_properties(message, next_state, old_tracks, new_tracks, data) do
+      {:ok, updated_data} ->
+        updated_data = %{updated_data | tracks: new_tracks}
+        updated_data = track_visited_state(updated_data, next_state)
+        timer_actions = liveness_actions(updated_data, next_state)
+        {:next_state, next_state, updated_data, [{:reply, from, reply} | timer_actions]}
+
+      {:violation, violation, updated_data} ->
+        updated_data = %{updated_data | tracks: new_tracks}
+        updated_data = track_visited_state(updated_data, next_state)
+        timer_actions = liveness_actions(updated_data, next_state)
+
+        handle_property_violation(
+          violation,
+          reply,
+          from,
+          next_state,
+          updated_data,
+          timer_actions
+        )
     end
   end
 
@@ -682,8 +691,6 @@ defmodule Accord.Monitor do
   end
 
   defp valid_tags(table, state) do
-    table.table
-    |> Enum.filter(fn {{s, _tag}, _t} -> s == state end)
-    |> Enum.map(fn {{_s, tag}, _t} -> tag end)
+    for {{s, tag}, _} <- table.table, s == state, do: tag
   end
 end
