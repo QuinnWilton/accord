@@ -244,11 +244,15 @@ defmodule Accord.MonitorTest do
 
   describe "guards and tracks" do
     defp guarded_ir do
-      guard_fn = fn {:acquire, _cid, token}, tracks -> token > tracks.fence_token end
+      release_guard_fn = fn {:release, token}, tracks ->
+        token == tracks.fence_token
+      end
 
-      update_fn = fn {:acquire, cid, token}, _reply, tracks ->
+      acquire_update_fn = fn {:acquire, cid}, {:ok, token}, tracks ->
         %{tracks | holder: cid, fence_token: token}
       end
+
+      release_update_fn = fn _msg, _reply, tracks -> %{tracks | holder: nil} end
 
       %IR{
         name: Lock.Protocol,
@@ -262,18 +266,31 @@ defmodule Accord.MonitorTest do
             name: :unlocked,
             transitions: [
               %Transition{
-                message_pattern: {:acquire, :_, :_},
-                message_types: [:term, :pos_integer],
+                message_pattern: {:acquire, :_},
+                message_types: [:term],
                 kind: :call,
                 branches: [
                   %Branch{reply_type: {:tagged, :ok, :pos_integer}, next_state: :locked}
                 ],
-                guard: %{fun: guard_fn, ast: nil},
-                update: %{fun: update_fn, ast: nil}
+                update: %{fun: acquire_update_fn, ast: nil}
               }
             ]
           },
-          locked: %State{name: :locked},
+          locked: %State{
+            name: :locked,
+            transitions: [
+              %Transition{
+                message_pattern: {:release, :_},
+                message_types: [:pos_integer],
+                kind: :call,
+                branches: [
+                  %Branch{reply_type: {:literal, :ok}, next_state: :unlocked}
+                ],
+                guard: %{fun: release_guard_fn, ast: nil},
+                update: %{fun: release_update_fn, ast: nil}
+              }
+            ]
+          },
           expired: %State{name: :expired, terminal: true}
         }
       }
@@ -284,58 +301,63 @@ defmodule Accord.MonitorTest do
 
       {:ok, server} =
         EchoServer.start_link(%{
-          acquire: fn {:acquire, _cid, token} -> {:ok, token} end
+          acquire: fn {:acquire, _cid} -> {:ok, 1} end,
+          release: :ok
         })
 
       {:ok, monitor} = start_monitor(compiled, server)
       %{monitor: monitor}
     end
 
-    test "guard passes with valid token", %{monitor: monitor} do
-      assert {:ok, 5} = Monitor.call(monitor, {:acquire, :c1, 5})
+    test "acquire succeeds and transitions to locked", %{monitor: monitor} do
+      assert {:ok, 1} = Monitor.call(monitor, {:acquire, :c1})
     end
 
-    test "guard fails with stale token", %{monitor: monitor} do
-      # First acquire succeeds (token 5 > fence_token 0).
-      assert {:ok, 5} = Monitor.call(monitor, {:acquire, :c1, 5})
+    test "release guard passes with correct holder and token" do
+      compiled = compile_ir(guarded_ir())
 
-      # Monitor is now in :locked state — :acquire is not valid there
-      # unless we had a transition. Let's test guard failure directly.
-    end
-
-    test "guard failure returns :guard_failed violation" do
-      # Build IR with fence_token default of 10, so token=1 passes type
-      # check but fails guard (1 is not > 10).
-      ir = guarded_ir()
-
-      ir =
-        update_in(ir.tracks, fn tracks ->
-          Enum.map(tracks, fn
-            %{name: :fence_token} = t -> %{t | default: 10}
-            t -> t
-          end)
-        end)
-
-      compiled = compile_ir(ir)
+      token_counter = :counters.new(1, [:atomics])
 
       {:ok, server} =
         EchoServer.start_link(%{
-          acquire: fn {:acquire, _cid, token} -> {:ok, token} end
+          acquire: fn {:acquire, _cid} ->
+            :counters.add(token_counter, 1, 1)
+            {:ok, :counters.get(token_counter, 1)}
+          end,
+          release: :ok
         })
 
       {:ok, monitor} = start_monitor(compiled, server)
 
-      # Token 1 is a valid pos_integer but 1 is not > 10.
-      assert {:accord_violation, violation} = Monitor.call(monitor, {:acquire, :c1, 1})
+      # Acquire sets holder=:c1, fence_token=1.
+      assert {:ok, 1} = Monitor.call(monitor, {:acquire, :c1})
+      # Release with correct token passes the guard.
+      assert :ok = Monitor.call(monitor, {:release, 1})
+    end
+
+    test "guard failure returns :guard_failed violation" do
+      compiled = compile_ir(guarded_ir())
+
+      {:ok, server} =
+        EchoServer.start_link(%{
+          acquire: fn {:acquire, _cid} -> {:ok, 5} end,
+          release: :ok
+        })
+
+      {:ok, monitor} = start_monitor(compiled, server)
+
+      # Acquire sets holder=:c1, fence_token=5.
+      assert {:ok, 5} = Monitor.call(monitor, {:acquire, :c1})
+
+      # Release with wrong token fails guard.
+      assert {:accord_violation, violation} = Monitor.call(monitor, {:release, 99})
       assert violation.blame == :client
       assert violation.kind == :guard_failed
     end
 
     test "tracks are updated after successful transition", %{monitor: monitor} do
-      assert {:ok, 5} = Monitor.call(monitor, {:acquire, :c1, 5})
-      # Can't directly inspect tracks, but a second acquire with token <= 5
-      # would fail if tracks were updated correctly. Since the monitor is
-      # now in :locked (no acquire transition), we verified the transition.
+      assert {:ok, 1} = Monitor.call(monitor, {:acquire, :c1})
+      # Monitor is now in :locked — the transition succeeded and tracks updated.
     end
   end
 

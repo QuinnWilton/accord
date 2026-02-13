@@ -30,12 +30,12 @@ defmodule Accord.ViolationTest do
 
   describe "guard_failed/2" do
     test "creates client blame with :guard_failed kind" do
-      v = Violation.guard_failed(:locked, {:release, :wrong_client, 1})
+      v = Violation.guard_failed(:locked, {:release, 99})
 
       assert v.blame == :client
       assert v.kind == :guard_failed
       assert v.state == :locked
-      assert v.message == {:release, :wrong_client, 1}
+      assert v.message == {:release, 99}
     end
   end
 

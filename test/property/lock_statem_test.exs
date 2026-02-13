@@ -2,9 +2,10 @@ defmodule Accord.Property.LockStatemTest do
   @moduledoc """
   PropCheck.StateM test for the Lock protocol.
 
-  Exercises tracks, guards, and guard failure blame. The lock protocol
-  enforces monotonic fence tokens, so stale-token acquires fail the guard
-  (client blame) while valid acquires mutate tracked state.
+  Exercises tracks, branching releases, and server-side token validation.
+  The server generates monotonically increasing fence tokens on acquire.
+  The client presents the token on release — the server validates the
+  token and replies `:ok` or `{:error, :invalid_token}`.
 
   NOTE: PropCheck.StateM.ModelDSL's `defcommand` macro does not rename
   `def` clauses with `when` guards (it only pattern-matches on the
@@ -41,19 +42,22 @@ defmodule Accord.Property.LockStatemTest do
     ])
   end
 
-  def command_gen(%__MODULE__{pending_fault: :wrong_reply_type}) do
-    # A fault is pending — send a valid message to trigger it.
-    {:send_acquire, [gen_client_id(), gen_token()]}
+  def command_gen(%__MODULE__{pending_fault: :wrong_reply_type, protocol_state: :unlocked}) do
+    # Fault pending in unlocked — send acquire to trigger it.
+    {:send_acquire, [gen_client_id()]}
+  end
+
+  def command_gen(%__MODULE__{pending_fault: :wrong_reply_type, protocol_state: :locked}) do
+    # Fault pending in locked — send acquire (rejected path) to trigger it.
+    {:send_acquire_rejected, [gen_client_id()]}
   end
 
   def command_gen(%__MODULE__{protocol_state: :unlocked}) do
     frequency([
-      # Valid: acquire with fresh token.
-      {5, {:send_acquire, [gen_client_id(), gen_token()]}},
+      # Valid: acquire (server generates token).
+      {5, {:send_acquire, [gen_client_id()]}},
       # Invalid: release while unlocked.
-      {2, {:send_release, [gen_client_id(), gen_token()]}},
-      # Guard fail: acquire with stale token (token 0 → arg type error).
-      {2, {:send_acquire_stale, [gen_client_id()]}},
+      {2, {:send_release, [gen_token()]}},
       # Anystate
       {2, {:send_ping, []}},
       {1, {:send_heartbeat, []}},
@@ -64,18 +68,14 @@ defmodule Accord.Property.LockStatemTest do
     ])
   end
 
-  def command_gen(%__MODULE__{protocol_state: :locked, holder: holder, fence_token: ft}) do
+  def command_gen(%__MODULE__{protocol_state: :locked, fence_token: ft}) do
     frequency([
-      # Valid: release with correct holder and token.
-      {4, {:send_release_valid, [exactly(holder), exactly(ft)]}},
-      # Valid: acquire with fresh token (preempt).
-      {3, {:send_acquire, [gen_client_id(), gen_token()]}},
-      # Guard fail: release with wrong holder.
-      {2, {:send_release_wrong_holder, [gen_client_id(), exactly(ft)]}},
-      # Guard fail: release with wrong token.
-      {2, {:send_release_wrong_token, [exactly(holder), gen_token()]}},
-      # Guard fail: acquire with stale token.
-      {2, {:send_acquire_stale, [gen_client_id()]}},
+      # Valid: release with correct token.
+      {4, {:send_release_valid, [exactly(ft)]}},
+      # Rejected: acquire while locked.
+      {3, {:send_acquire_rejected, [gen_client_id()]}},
+      # Server rejects: release with wrong token.
+      {2, {:send_release_wrong_token, [gen_token()]}},
       # Anystate
       {2, {:send_ping, []}},
       {1, {:send_heartbeat, []}},
@@ -93,8 +93,8 @@ defmodule Accord.Property.LockStatemTest do
 
   defp gen_valid_message do
     oneof([
-      {:acquire, gen_client_id(), gen_token()},
-      {:release, gen_client_id(), gen_token()},
+      {:acquire, gen_client_id()},
+      {:release, gen_token()},
       :ping
     ])
   end
@@ -104,123 +104,103 @@ defmodule Accord.Property.LockStatemTest do
   # No `when` guards in defcommand blocks — PropCheck's macro doesn't rename them.
 
   defcommand :send_acquire do
-    def impl(client_id, token) do
-      monitor = Process.get(:test_monitor)
-      Monitor.call(monitor, {:acquire, client_id, token})
-    end
-
-    def pre(%__MODULE__{terminal: true}, [_cid, _token]), do: false
-    def pre(_, _), do: true
-
-    def post(%__MODULE__{fence_token: ft, pending_fault: fault}, [_cid, token], result) do
-      cond do
-        token <= ft ->
-          # Guard fails before forwarding — fault not consumed.
-          match?({:accord_violation, %{blame: :client, kind: :guard_failed}}, result)
-
-        fault == :wrong_reply_type ->
-          # Guard passes, message forwarded, fault triggers.
-          match?({:accord_violation, %{blame: :server, kind: :invalid_reply}}, result)
-
-        true ->
-          result == {:ok, token}
-      end
-    end
-
-    def next(%__MODULE__{fence_token: ft} = state, [cid, token], _result) do
-      cond do
-        token <= ft ->
-          # Guard failed — state unchanged, fault not consumed.
-          state
-
-        state.pending_fault == :wrong_reply_type ->
-          # Fault consumed, server state unchanged.
-          %{state | pending_fault: nil}
-
-        true ->
-          %{state | holder: cid, fence_token: token, protocol_state: :locked}
-      end
-    end
-  end
-
-  defcommand :send_acquire_stale do
     def impl(client_id) do
-      # Token 0 fails pos_integer type check (0 is not positive).
       monitor = Process.get(:test_monitor)
-      Monitor.call(monitor, {:acquire, client_id, 0})
-    end
-
-    def pre(%__MODULE__{terminal: true}, _), do: false
-    def pre(_, _), do: true
-
-    def post(_state, [_cid], result) do
-      match?({:accord_violation, %{blame: :client, kind: :argument_type}}, result)
-    end
-  end
-
-  defcommand :send_release_valid do
-    def impl(client_id, token) do
-      monitor = Process.get(:test_monitor)
-      Monitor.call(monitor, {:release, client_id, token})
-    end
-
-    def pre(%__MODULE__{protocol_state: :locked}, _), do: true
-    def pre(_, _), do: false
-
-    def post(_state, [_cid, _token], result) do
-      result == :ok
-    end
-
-    def next(state, [_cid, _token], _result) do
-      %{state | holder: nil, protocol_state: :unlocked}
-    end
-  end
-
-  defcommand :send_release do
-    def impl(client_id, token) do
-      monitor = Process.get(:test_monitor)
-      Monitor.call(monitor, {:release, client_id, token})
+      Monitor.call(monitor, {:acquire, client_id})
     end
 
     def pre(%__MODULE__{protocol_state: :unlocked, terminal: false}, _), do: true
     def pre(_, _), do: false
 
-    def post(_state, [_cid, _token], result) do
+    def post(%__MODULE__{fence_token: ft, pending_fault: fault}, [_cid], result) do
+      if fault == :wrong_reply_type do
+        match?({:accord_violation, %{blame: :server, kind: :invalid_reply}}, result)
+      else
+        result == {:ok, ft + 1}
+      end
+    end
+
+    def next(%__MODULE__{fence_token: ft} = state, [cid], _result) do
+      if state.pending_fault == :wrong_reply_type do
+        %{state | pending_fault: nil}
+      else
+        %{state | holder: cid, fence_token: ft + 1, protocol_state: :locked}
+      end
+    end
+  end
+
+  defcommand :send_acquire_rejected do
+    def impl(client_id) do
+      monitor = Process.get(:test_monitor)
+      Monitor.call(monitor, {:acquire, client_id})
+    end
+
+    def pre(%__MODULE__{protocol_state: :locked, terminal: false}, _), do: true
+    def pre(_, _), do: false
+
+    def post(%__MODULE__{pending_fault: fault}, [_cid], result) do
+      if fault == :wrong_reply_type do
+        match?({:accord_violation, %{blame: :server, kind: :invalid_reply}}, result)
+      else
+        result == {:error, :already_held}
+      end
+    end
+
+    def next(state, [_cid], _result) do
+      if state.pending_fault == :wrong_reply_type do
+        %{state | pending_fault: nil}
+      else
+        state
+      end
+    end
+  end
+
+  defcommand :send_release_valid do
+    def impl(token) do
+      monitor = Process.get(:test_monitor)
+      Monitor.call(monitor, {:release, token})
+    end
+
+    def pre(%__MODULE__{protocol_state: :locked}, _), do: true
+    def pre(_, _), do: false
+
+    def post(_state, [_token], result) do
+      result == :ok
+    end
+
+    def next(state, [_token], _result) do
+      %{state | holder: nil, protocol_state: :unlocked}
+    end
+  end
+
+  defcommand :send_release do
+    def impl(token) do
+      monitor = Process.get(:test_monitor)
+      Monitor.call(monitor, {:release, token})
+    end
+
+    def pre(%__MODULE__{protocol_state: :unlocked, terminal: false}, _), do: true
+    def pre(_, _), do: false
+
+    def post(_state, [_token], result) do
       match?({:accord_violation, %{blame: :client, kind: :invalid_message}}, result)
     end
   end
 
-  defcommand :send_release_wrong_holder do
-    def impl(client_id, token) do
-      monitor = Process.get(:test_monitor)
-      Monitor.call(monitor, {:release, client_id, token})
-    end
-
-    def pre(%__MODULE__{protocol_state: :locked, holder: holder}, [cid, _token]) do
-      cid != holder
-    end
-
-    def pre(_, _), do: false
-
-    def post(_state, [_cid, _token], result) do
-      match?({:accord_violation, %{blame: :client, kind: :guard_failed}}, result)
-    end
-  end
-
   defcommand :send_release_wrong_token do
-    def impl(client_id, token) do
+    def impl(token) do
       monitor = Process.get(:test_monitor)
-      Monitor.call(monitor, {:release, client_id, token})
+      Monitor.call(monitor, {:release, token})
     end
 
-    def pre(%__MODULE__{protocol_state: :locked, fence_token: ft}, [_cid, token]) do
+    def pre(%__MODULE__{protocol_state: :locked, fence_token: ft}, [token]) do
       token != ft
     end
 
     def pre(_, _), do: false
 
-    def post(_state, [_cid, _token], result) do
-      match?({:accord_violation, %{blame: :client, kind: :guard_failed}}, result)
+    def post(_state, [_token], result) do
+      result == {:error, :invalid_token}
     end
   end
 
@@ -311,7 +291,7 @@ defmodule Accord.Property.LockStatemTest do
 
   # -- Property --
 
-  property "lock protocol monitor handles tracks, guards, and faults correctly",
+  property "lock protocol monitor handles tracks, branching, and faults correctly",
            [:verbose, numtests: 200, max_size: 30] do
     forall cmds <- commands(__MODULE__) do
       {:ok, faulty} = FaultyServer.start_link(Lock.Server)

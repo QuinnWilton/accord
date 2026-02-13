@@ -201,9 +201,17 @@ defmodule Accord.TLA.GuardCompilerTest do
     end
 
     test "fn with pattern match args" do
-      ast = quote(do: fn {:acquire, _cid, token}, tracks -> token > tracks.fence_token end)
-      bindings = %{token: "msg_token"}
-      assert {:ok, "msg_token > fence_token"} = GuardCompiler.compile(ast, bindings)
+      ast =
+        quote(
+          do: fn {:bet, chips}, tracks ->
+            chips <= tracks.balance
+          end
+        )
+
+      bindings = %{chips: "msg_chips"}
+
+      assert {:ok, "msg_chips =< balance"} =
+               GuardCompiler.compile(ast, bindings)
     end
   end
 
@@ -242,14 +250,13 @@ defmodule Accord.TLA.GuardCompilerTest do
   end
 
   describe "real-world guard patterns" do
-    test "lock guard: monotonic token" do
-      # fn {:acquire, _cid, token}, tracks -> token > tracks.fence_token end
+    test "comparison with bound variable" do
       ast = quote(do: token > tracks.fence_token)
       bindings = %{token: "msg_token"}
       assert {:ok, "msg_token > fence_token"} = GuardCompiler.compile(ast, bindings)
     end
 
-    test "lock guard: holder check" do
+    test "compound boolean with bindings" do
       ast = quote(do: client_id == tracks.holder and token == tracks.fence_token)
       bindings = %{client_id: "msg_client_id", token: "msg_token"}
 

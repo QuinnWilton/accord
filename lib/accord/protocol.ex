@@ -420,7 +420,7 @@ defmodule Accord.Protocol do
       end
 
       property :holder_set do
-        invariant :locked, fn {:acquire, _, _}, tracks ->
+        invariant :locked, fn {:acquire, _}, tracks ->
           tracks.holder != nil
         end
       end

@@ -31,9 +31,9 @@ defmodule Accord.TLA.GuardCompiler do
   The `bindings` argument maps Elixir variable names to TLA+ identifiers.
   This is used to resolve pattern-match bindings from message patterns:
 
-      # Elixir guard: fn {:acquire, _cid, token}, tracks -> token > tracks.fence_token end
-      # bindings: %{token: "msg_token"}
-      # TLA+ output: "msg_token > fence_token"
+      # Elixir guard: fn {:bet, chips}, tracks -> chips <= tracks.balance end
+      # bindings: %{chips: "msg_chips"}
+      # TLA+ output: "msg_chips =< balance"
   """
 
   @type warning :: %{message: String.t(), ast: Macro.t()}

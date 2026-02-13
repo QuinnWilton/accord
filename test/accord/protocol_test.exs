@@ -92,15 +92,16 @@ defmodule Accord.ProtocolTest do
     end
 
     state :locked do
-      on {:release, _client_id :: term(), _token :: pos_integer()} do
-        reply :ok
-        goto :unlocked
+      on {:release, _token :: pos_integer()} do
+        branch :ok, goto: :unlocked
+        branch {:error, :invalid_token}, goto: :locked
 
-        guard fn {:release, client_id, token}, tracks ->
-          client_id == tracks.holder and token == tracks.fence_token
+        update fn _msg, reply, tracks ->
+          case reply do
+            :ok -> %{tracks | holder: nil}
+            _ -> tracks
+          end
         end
-
-        update fn _msg, _reply, tracks -> %{tracks | holder: nil} end
       end
 
       on :expire, reply: :expired, goto: :expired
@@ -156,7 +157,7 @@ defmodule Accord.ProtocolTest do
     end
 
     state :locked do
-      on {:release, _cid :: term(), _token :: pos_integer()} do
+      on {:release, _token :: pos_integer()} do
         reply :ok
         goto :unlocked
       end
@@ -343,7 +344,7 @@ defmodule Accord.ProtocolTest do
     end
   end
 
-  describe "__ir__/0 — block form with tracks and guards" do
+  describe "__ir__/0 — block form with tracks and updates" do
     test "tracks are populated" do
       ir = BlockFormProtocol.__ir__()
       assert length(ir.tracks) == 2
@@ -362,13 +363,18 @@ defmodule Accord.ProtocolTest do
       assert acquire.guard == nil
     end
 
-    test "release transition has guard" do
+    test "release transition has branches, no guard" do
       ir = BlockFormProtocol.__ir__()
       [release | _] = ir.states[:locked].transitions
 
-      assert release.guard != nil
-      assert is_function(release.guard.fun, 2)
-      assert release.guard.ast != nil
+      assert release.guard == nil
+      assert length(release.branches) == 2
+
+      [ok_branch, error_branch] = release.branches
+      assert ok_branch.reply_type == {:literal, :ok}
+      assert ok_branch.next_state == :unlocked
+      assert error_branch.reply_type == {:tagged, :error, {:literal, :invalid_token}}
+      assert error_branch.next_state == :locked
     end
 
     test "block form transition has update" do
@@ -385,16 +391,6 @@ defmodule Accord.ProtocolTest do
 
       assert [%Branch{reply_type: {:tagged, :ok, :pos_integer}, next_state: :locked}] =
                acquire.branches
-    end
-
-    test "guard function evaluates correctly" do
-      ir = BlockFormProtocol.__ir__()
-      [release | _] = ir.states[:locked].transitions
-
-      tracks = %{fence_token: 5, holder: :c1}
-      assert release.guard.fun.({:release, :c1, 5}, tracks) == true
-      assert release.guard.fun.({:release, :c2, 5}, tracks) == false
-      assert release.guard.fun.({:release, :c1, 3}, tracks) == false
     end
 
     test "update function works correctly" do

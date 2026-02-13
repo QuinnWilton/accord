@@ -31,24 +31,19 @@ defmodule Accord.TLA.SpanMapTest do
           span: Pentiment.Span.position(11, 3),
           transitions: [
             %Transition{
-              message_pattern: {:acquire, :_, :_},
-              message_types: [:term, :pos_integer],
+              message_pattern: {:acquire, :_},
+              message_types: [:term],
               kind: :call,
               branches: [
                 %Branch{reply_type: {:tagged, :ok, :pos_integer}, next_state: :locked}
               ],
-              guard: %{
-                fun: fn {:acquire, _cid, token}, tracks -> token > tracks.fence_token end,
-                ast:
-                  quote(do: fn {:acquire, _cid, token}, tracks -> token > tracks.fence_token end)
-              },
               update: %{
-                fun: fn {:acquire, cid, token}, _reply, tracks ->
+                fun: fn {:acquire, cid}, {:ok, token}, tracks ->
                   %{tracks | holder: cid, fence_token: token}
                 end,
                 ast:
                   quote(
-                    do: fn {:acquire, cid, token}, _reply, tracks ->
+                    do: fn {:acquire, cid}, {:ok, token}, tracks ->
                       %{tracks | holder: cid, fence_token: token}
                     end
                   )
@@ -62,26 +57,32 @@ defmodule Accord.TLA.SpanMapTest do
           span: Pentiment.Span.position(20, 3),
           transitions: [
             %Transition{
-              message_pattern: {:release, :_, :_},
-              message_types: [:term, :pos_integer],
+              message_pattern: {:release, :_},
+              message_types: [:pos_integer],
               kind: :call,
               branches: [
-                %Branch{reply_type: {:literal, :ok}, next_state: :unlocked}
+                %Branch{reply_type: {:literal, :ok}, next_state: :unlocked},
+                %Branch{
+                  reply_type: {:tagged, :error, {:literal, :invalid_token}},
+                  next_state: :locked
+                }
               ],
-              guard: %{
-                fun: fn {:release, cid, token}, tracks ->
-                  cid == tracks.holder and token == tracks.fence_token
+              update: %{
+                fun: fn _msg, reply, tracks ->
+                  case reply do
+                    :ok -> %{tracks | holder: nil}
+                    _ -> tracks
+                  end
                 end,
                 ast:
                   quote(
-                    do: fn {:release, cid, token}, tracks ->
-                      cid == tracks.holder and token == tracks.fence_token
+                    do: fn _msg, reply, tracks ->
+                      case reply do
+                        :ok -> %{tracks | holder: nil}
+                        _ -> tracks
+                      end
                     end
                   )
-              },
-              update: %{
-                fun: fn _msg, _reply, tracks -> %{tracks | holder: nil} end,
-                ast: quote(do: fn _msg, _reply, tracks -> %{tracks | holder: nil} end)
               },
               span: Pentiment.Span.position(21, 5)
             }

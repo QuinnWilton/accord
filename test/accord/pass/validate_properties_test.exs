@@ -18,8 +18,8 @@ defmodule Accord.Pass.ValidatePropertiesTest do
           name: :unlocked,
           transitions: [
             %Transition{
-              message_pattern: {:acquire, :_, :_},
-              message_types: [:term, :pos_integer],
+              message_pattern: {:acquire, :_},
+              message_types: [:term],
               kind: :call,
               branches: [
                 %Branch{reply_type: {:tagged, :ok, :pos_integer}, next_state: :locked}
@@ -32,7 +32,7 @@ defmodule Accord.Pass.ValidatePropertiesTest do
           transitions: [
             %Transition{
               message_pattern: {:release, :_},
-              message_types: [:term],
+              message_types: [:pos_integer],
               kind: :call,
               branches: [
                 %Branch{reply_type: {:literal, :ok}, next_state: :unlocked}

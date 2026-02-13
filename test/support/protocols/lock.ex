@@ -1,10 +1,11 @@
 defmodule Accord.Test.Lock.Protocol do
   @moduledoc """
-  Distributed lock protocol for testing tracks and guards.
+  Distributed fencing token lock protocol.
 
-  The lock protocol enforces monotonic fence tokens — each acquire must
-  use a strictly greater token than the previous one. This exercises
-  guard evaluation, track mutation, and guard failure blame.
+  Models a standard distributed lock with mutual exclusion and
+  monotonically increasing fence tokens. The server generates a new
+  token on each successful acquire. The client presents the token on
+  release to prove ownership. Acquiring while locked is rejected.
   """
   use Accord.Protocol
 
@@ -14,16 +15,12 @@ defmodule Accord.Test.Lock.Protocol do
   track(:fence_token, :non_neg_integer, default: 0)
 
   state :unlocked do
-    on {:acquire, _client_id :: term(), _token :: pos_integer()} do
+    on {:acquire, _client_id :: term()} do
       reply({:ok, pos_integer()})
       goto(:locked)
 
-      guard(fn {:acquire, _client_id, token}, tracks ->
-        token > tracks.fence_token
-      end)
-
-      update(fn {:acquire, client_id, token}, _reply, tracks ->
-        %{tracks | holder: client_id, fence_token: token}
+      update(fn {:acquire, cid}, {:ok, token}, tracks ->
+        %{tracks | holder: cid, fence_token: token}
       end)
     end
 
@@ -31,30 +28,21 @@ defmodule Accord.Test.Lock.Protocol do
   end
 
   state :locked do
-    on {:release, _client_id :: term(), _token :: pos_integer()} do
-      reply(:ok)
-      goto(:unlocked)
+    on {:release, _token :: pos_integer()} do
+      branch(:ok, goto: :unlocked)
+      branch({:error, :invalid_token}, goto: :locked)
 
-      guard(fn {:release, client_id, token}, tracks ->
-        client_id == tracks.holder and token == tracks.fence_token
-      end)
-
-      update(fn _msg, _reply, tracks ->
-        %{tracks | holder: nil}
+      update(fn _msg, reply, tracks ->
+        case reply do
+          :ok -> %{tracks | holder: nil}
+          _ -> tracks
+        end
       end)
     end
 
-    on {:acquire, _client_id :: term(), _token :: pos_integer()} do
-      reply({:ok, pos_integer()})
+    on {:acquire, _client_id :: term()} do
+      reply({:error, :already_held})
       goto(:locked)
-
-      guard(fn {:acquire, _client_id, token}, tracks ->
-        token > tracks.fence_token
-      end)
-
-      update(fn {:acquire, client_id, token}, _reply, tracks ->
-        %{tracks | holder: client_id, fence_token: token}
-      end)
     end
 
     on(:stop, reply: :stopped, goto: :stopped)
@@ -84,14 +72,23 @@ defmodule Accord.Test.Lock.Server do
   end
 
   @impl true
-  def handle_call({:acquire, client_id, token}, _from, state) do
-    new_state = %{state | holder: client_id, fence_token: token}
-    {:reply, {:ok, token}, new_state}
+  def handle_call({:acquire, client_id}, _from, state) do
+    if state.holder == nil do
+      new_token = state.fence_token + 1
+      new_state = %{state | holder: client_id, fence_token: new_token}
+      {:reply, {:ok, new_token}, new_state}
+    else
+      {:reply, {:error, :already_held}, state}
+    end
   end
 
-  def handle_call({:release, _client_id, _token}, _from, state) do
-    new_state = %{state | holder: nil}
-    {:reply, :ok, new_state}
+  def handle_call({:release, token}, _from, state) do
+    if token == state.fence_token do
+      new_state = %{state | holder: nil}
+      {:reply, :ok, new_state}
+    else
+      {:reply, {:error, :invalid_token}, state}
+    end
   end
 
   def handle_call(:stop, _from, state) do
