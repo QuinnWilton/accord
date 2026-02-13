@@ -80,10 +80,11 @@ defmodule Accord.ViolationSpanTest do
       [violation] = ViolationCollector.drain()
       assert violation.kind == :action_violated
       assert violation.context.property == :monotonic_tokens
+      assert violation.context.check_kind == :action
 
       assert %Pentiment.Span.Search{} = violation.span
-      assert violation.span.line == 63
-      assert violation.span.pattern == ":monotonic_tokens"
+      assert violation.span.line == 64
+      assert violation.span.pattern == "action"
       assert_search_span_valid(violation.span, compiled.ir.source_file)
     end
 
@@ -105,10 +106,11 @@ defmodule Accord.ViolationSpanTest do
       [violation] = ViolationCollector.drain()
       assert violation.kind == :invariant_violated
       assert violation.context.property == :holder_consistency
+      assert violation.context.check_kind == :local_invariant
 
       assert %Pentiment.Span.Search{} = violation.span
-      assert violation.span.line == 67
-      assert violation.span.pattern == ":holder_consistency"
+      assert violation.span.line == 68
+      assert violation.span.pattern == "invariant"
       assert_search_span_valid(violation.span, compiled.ir.source_file)
     end
   end

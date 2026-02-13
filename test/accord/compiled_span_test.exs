@@ -189,14 +189,63 @@ defmodule Accord.CompiledSpanTest do
       %{ir: ir, source: source_for(ir)}
     end
 
-    test "check spans resolve to parent property name", %{ir: ir, source: source} do
+    test "check spans resolve to check keyword", %{ir: ir, source: source} do
       for prop <- ir.properties, check <- prop.checks do
         assert %Search{} = check.span,
                "expected Search span for #{inspect(prop.name)}/#{check.kind} check"
 
-        assert SpanHelper.resolve_text(check.span, source) == inspect(prop.name),
+        expected = check_keyword(check.kind)
+
+        assert SpanHelper.resolve_text(check.span, source) == expected,
                "#{inspect(prop.name)}/#{check.kind} check span resolved to wrong text"
       end
+    end
+
+    defp check_keyword(:local_invariant), do: "invariant"
+    defp check_keyword(:invariant), do: "invariant"
+    defp check_keyword(:action), do: "action"
+    defp check_keyword(:liveness), do: "liveness"
+    defp check_keyword(:correspondence), do: "correspondence"
+    defp check_keyword(:bounded), do: "bounded"
+    defp check_keyword(:ordered), do: "ordered"
+    defp check_keyword(:precedence), do: "precedence"
+    defp check_keyword(:reachable), do: "reachable"
+    defp check_keyword(:forbidden), do: "forbidden"
+  end
+
+  describe "Lock protocol — next_state_span" do
+    setup do
+      ir = Accord.Test.Lock.Protocol.__ir__()
+      %{ir: ir, source: source_for(ir)}
+    end
+
+    test "block goto captures next_state_span", %{ir: ir, source: source} do
+      acquire = find_transition(ir, :unlocked, :acquire)
+      [branch] = acquire.branches
+      assert %Search{} = branch.next_state_span
+      assert SpanHelper.resolve_text(branch.next_state_span, source) == ":locked"
+    end
+
+    test "keyword goto captures next_state_span", %{ir: ir, source: source} do
+      stop = find_transition(ir, :unlocked, :stop)
+      [branch] = stop.branches
+      assert %Search{} = branch.next_state_span
+      assert SpanHelper.resolve_text(branch.next_state_span, source) == ":stopped"
+    end
+
+    test "branch macro captures next_state_span", %{ir: ir, source: source} do
+      release = find_transition(ir, :locked, :release)
+      [ok_branch, error_branch] = release.branches
+      assert %Search{} = ok_branch.next_state_span
+      assert SpanHelper.resolve_text(ok_branch.next_state_span, source) == ":unlocked"
+      assert %Search{} = error_branch.next_state_span
+      assert SpanHelper.resolve_text(error_branch.next_state_span, source) == ":locked"
+    end
+
+    test "anystate branches have nil next_state_span", %{ir: ir} do
+      ping = find_anystate_transition(ir, :ping)
+      [branch] = ping.branches
+      assert branch.next_state_span == nil
     end
   end
 
@@ -428,11 +477,11 @@ defmodule Accord.CompiledSpanTest do
       assert SpanHelper.resolve_text(solvent.span, source) == ":solvent"
     end
 
-    test "check span resolves to parent property name", %{ir: ir, source: source} do
+    test "check span resolves to check keyword", %{ir: ir, source: source} do
       solvent = find_property(ir, :solvent)
       [check] = solvent.checks
       assert %Search{} = check.span
-      assert SpanHelper.resolve_text(check.span, source) == ":solvent"
+      assert SpanHelper.resolve_text(check.span, source) == "invariant"
     end
   end
 end
