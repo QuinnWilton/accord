@@ -278,8 +278,10 @@ defmodule Accord.TLA.TLCParserTest do
       assert stats.depth == 42
     end
 
-    test "handles empty/unknown output gracefully" do
+    test "handles empty/unknown output as :error kind" do
       assert {:error, violation, _stats} = TLCParser.parse("")
+      assert violation.kind == :error
+      assert violation.message == nil
       assert violation.trace == []
     end
 
@@ -298,6 +300,43 @@ defmodule Accord.TLA.TLCParserTest do
       {:error, violation, _stats} = TLCParser.parse(output)
       assert length(violation.trace) == 1
       assert Enum.at(violation.trace, 0).assignments["x"] == "0"
+    end
+  end
+
+  # -- TLC errors --
+
+  describe "TLC errors" do
+    test "captures OutOfMemoryError" do
+      output = """
+      TLC2 Version 2.18 of 22 July 2022
+      java.lang.OutOfMemoryError: Java heap space
+      """
+
+      assert {:error, violation, _stats} = TLCParser.parse(output)
+      assert violation.kind == :error
+      assert violation.message =~ "OutOfMemoryError"
+    end
+
+    test "captures StackOverflowError" do
+      output = """
+      TLC2 Version 2.18 of 22 July 2022
+      java.lang.StackOverflowError
+      """
+
+      assert {:error, violation, _stats} = TLCParser.parse(output)
+      assert violation.kind == :error
+      assert violation.message =~ "StackOverflowError"
+    end
+
+    test "captures unrecognized Error lines" do
+      output = """
+      TLC2 Version 2.18 of 22 July 2022
+      Error: Something unexpected happened.
+      """
+
+      assert {:error, violation, _stats} = TLCParser.parse(output)
+      assert violation.kind == :error
+      assert violation.message =~ "Error: Something unexpected happened."
     end
   end
 end

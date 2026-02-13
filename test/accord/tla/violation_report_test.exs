@@ -178,6 +178,37 @@ defmodule Accord.TLA.ViolationReportTest do
     end
   end
 
+  describe "TLC error reports" do
+    test "renders error with message" do
+      violation = %{
+        kind: :error,
+        property: nil,
+        message: "java.lang.OutOfMemoryError: Java heap space",
+        trace: []
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      assert formatted =~ "TLC model checker failed"
+      assert formatted =~ "OutOfMemoryError"
+    end
+
+    test "renders error without message" do
+      violation = %{
+        kind: :error,
+        property: nil,
+        message: nil,
+        trace: []
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      assert formatted =~ "TLC model checker failed"
+      assert formatted =~ "unrecognized output"
+      assert formatted =~ "installed correctly"
+    end
+  end
+
   describe "TypeInvariant domain overflow hints" do
     test "detects overflow and suggests remediation" do
       violation = %{

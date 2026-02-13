@@ -261,4 +261,5 @@ defmodule Mix.Tasks.Accord.Check do
 
   defp violation_label(%{kind: :deadlock}), do: "deadlock reached"
   defp violation_label(%{kind: :temporal}), do: "temporal property violated"
+  defp violation_label(%{kind: :error}), do: "TLC error"
 end

@@ -22,8 +22,9 @@ defmodule Accord.TLA.TLCParser do
         }
 
   @type violation :: %{
-          kind: :invariant | :deadlock | :temporal | :action_property,
+          kind: :invariant | :deadlock | :temporal | :action_property | :error,
           property: String.t() | nil,
+          message: String.t() | nil,
           trace: trace()
         }
 
@@ -45,22 +46,23 @@ defmodule Accord.TLA.TLCParser do
 
       {:invariant, property} ->
         trace = parse_trace(lines)
-        {:error, %{kind: :invariant, property: property, trace: trace}, stats}
+        {:error, %{kind: :invariant, property: property, message: nil, trace: trace}, stats}
 
       {:action_property, property} ->
         trace = parse_trace(lines)
-        {:error, %{kind: :action_property, property: property, trace: trace}, stats}
+        {:error, %{kind: :action_property, property: property, message: nil, trace: trace}, stats}
 
       :deadlock ->
         trace = parse_trace(lines)
-        {:error, %{kind: :deadlock, property: nil, trace: trace}, stats}
+        {:error, %{kind: :deadlock, property: nil, message: nil, trace: trace}, stats}
 
       :temporal ->
         trace = parse_trace(lines)
-        {:error, %{kind: :temporal, property: nil, trace: trace}, stats}
+        {:error, %{kind: :temporal, property: nil, message: nil, trace: trace}, stats}
 
       :unknown ->
-        {:error, %{kind: :invariant, property: nil, trace: []}, stats}
+        message = extract_error_lines(lines)
+        {:error, %{kind: :error, property: nil, message: message, trace: []}, stats}
     end
   end
 
@@ -87,6 +89,23 @@ defmodule Accord.TLA.TLCParser do
           {:cont, acc}
       end
     end)
+  end
+
+  # Extract error-relevant lines from unrecognized TLC output.
+  defp extract_error_lines(lines) do
+    error_lines =
+      Enum.filter(lines, fn line ->
+        String.contains?(line, "Error:") or
+          String.contains?(line, "OutOfMemoryError") or
+          String.contains?(line, "StackOverflowError") or
+          String.contains?(line, "java.lang.") or
+          String.contains?(line, "TLCRuntimeException")
+      end)
+
+    case error_lines do
+      [] -> nil
+      _ -> Enum.join(error_lines, "\n")
+    end
   end
 
   # -- Trace parsing --

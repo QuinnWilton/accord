@@ -59,6 +59,17 @@ defmodule Accord.TLA.ViolationReport do
     Report.error("temporal property violated")
   end
 
+  defp build_report(%{kind: :error, message: message}) when is_binary(message) do
+    Report.error("TLC model checker failed")
+    |> Report.with_note(message)
+  end
+
+  defp build_report(%{kind: :error}) do
+    Report.error("TLC model checker failed")
+    |> Report.with_note("TLC produced unrecognized output")
+    |> Report.with_help("check that TLC is installed correctly")
+  end
+
   # -- Source Labels --
 
   # Attach a primary label pointing at the violated property's definition.
