@@ -281,7 +281,7 @@ defmodule Accord.ProtocolTest do
     test "transition has span" do
       ir = SimpleProtocol.__ir__()
       [ping, _] = ir.states[:ready].transitions
-      assert %Pentiment.Span.Position{} = ping.span
+      assert %Pentiment.Span.Search{} = ping.span
     end
   end
 
@@ -595,7 +595,7 @@ defmodule Accord.ProtocolTest do
       ir = PropertyProtocol.__ir__()
       prop = Enum.find(ir.properties, &(&1.name == :monotonic_tokens))
       [check] = prop.checks
-      assert %Pentiment.Span.Position{} = check.span
+      assert %Pentiment.Span.Search{} = check.span
     end
   end
 
@@ -608,7 +608,7 @@ defmodule Accord.ProtocolTest do
 
     test "returns spans for track variable names" do
       span = PropertyProtocol.__tla_span__("fence_token")
-      assert %Pentiment.Span.Position{} = span
+      assert %Pentiment.Span.Search{} = span
     end
 
     test "returns spans for CamelCase property names" do

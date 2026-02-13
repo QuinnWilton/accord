@@ -122,7 +122,7 @@ defmodule Accord.Protocol do
     default = Keyword.fetch!(opts, :default)
     type_value = parse_track_type(type)
     escaped_type = Macro.escape(type_value)
-    span = span_ast(__CALLER__)
+    span = span_from_name_ast(name, __CALLER__)
 
     quote do
       Module.put_attribute(
@@ -259,7 +259,7 @@ defmodule Accord.Protocol do
     escaped_types = Macro.escape(message_types)
     escaped_arg_names = Macro.escape(message_arg_names)
     escaped_arg_spans = Macro.escape(message_arg_spans)
-    span = span_ast(__CALLER__)
+    span = message_span_ast(message_spec, __CALLER__)
 
     quote do
       import Accord.Protocol.Block
@@ -350,7 +350,8 @@ defmodule Accord.Protocol do
     escaped_arg_spans = Macro.escape(message_arg_spans)
     escaped_reply_type = Macro.escape(reply_type)
 
-    span = span_ast(__CALLER__)
+    span = message_span_ast(message_spec, __CALLER__)
+    reply_pattern = Macro.to_string(reply_spec)
     caller_file = __CALLER__.file
     caller_line = __CALLER__.line
 
@@ -375,7 +376,11 @@ defmodule Accord.Protocol do
             %Branch{
               reply_type: unquote(escaped_reply_type),
               next_state: :__same__,
-              span: unquote(span)
+              span:
+                Pentiment.Span.search(
+                  line: unquote(caller_line),
+                  pattern: unquote(reply_pattern)
+                )
             }
           ],
           span: unquote(span)
@@ -400,7 +405,11 @@ defmodule Accord.Protocol do
             %Branch{
               reply_type: unquote(escaped_reply_type),
               next_state: unquote(next_state),
-              span: unquote(span)
+              span:
+                Pentiment.Span.search(
+                  line: unquote(caller_line),
+                  pattern: unquote(reply_pattern)
+                )
             }
           ],
           span: unquote(span)
@@ -420,7 +429,7 @@ defmodule Accord.Protocol do
       parse_message_spec(message_spec)
 
     escaped_types = Macro.escape(message_types)
-    span = span_ast(__CALLER__)
+    span = message_span_ast(message_spec, __CALLER__)
 
     quote do
       in_anystate = Module.get_attribute(__MODULE__, :accord_in_anystate, false)
@@ -483,6 +492,7 @@ defmodule Accord.Protocol do
       import Accord.Protocol.Property
 
       Module.put_attribute(__MODULE__, :accord_property_checks, [])
+      Module.put_attribute(__MODULE__, :accord_current_property_span, unquote(span))
 
       unquote(block)
 
@@ -500,6 +510,7 @@ defmodule Accord.Protocol do
       )
 
       Module.delete_attribute(__MODULE__, :accord_property_checks)
+      Module.delete_attribute(__MODULE__, :accord_current_property_span)
 
       import Accord.Protocol.Property, only: []
     end
@@ -977,6 +988,16 @@ defmodule Accord.Protocol do
 
     quote do
       Pentiment.Elixir.span_from_meta(unquote(meta))
+    end
+  end
+
+  # Builds a search span covering the full message spec text.
+  defp message_span_ast(message_spec, caller) do
+    pattern = Macro.to_string(message_spec)
+    line = caller.line
+
+    quote do
+      Pentiment.Span.search(line: unquote(line), pattern: unquote(pattern))
     end
   end
 

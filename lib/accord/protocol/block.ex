@@ -91,6 +91,7 @@ defmodule Accord.Protocol.Block do
     reply_type = Accord.Protocol.parse_reply_spec(reply_spec)
     escaped = Macro.escape(reply_type)
     line = __CALLER__.line
+    pattern = Macro.to_string(reply_spec)
 
     quote do
       branches = Module.get_attribute(__MODULE__, :accord_on_branches)
@@ -102,7 +103,7 @@ defmodule Accord.Protocol.Block do
           %Branch{
             reply_type: unquote(escaped),
             next_state: unquote(next_state),
-            span: Pentiment.Span.search(line: unquote(line), pattern: "branch")
+            span: Pentiment.Span.search(line: unquote(line), pattern: unquote(pattern))
           }
           | branches
         ]

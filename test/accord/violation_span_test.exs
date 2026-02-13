@@ -132,9 +132,9 @@ defmodule Accord.ViolationSpanTest do
       {:ok, transition} =
         TransitionTable.lookup(compiled.transition_table, :unlocked, {:acquire, :c1})
 
-      # Transition span still points at the on-declaration.
-      assert %Pentiment.Span.Position{} = transition.span
-      assert transition.span.start_line == 18
+      # Transition span covers the full message spec.
+      assert %Pentiment.Span.Search{} = transition.span
+      assert transition.span.line == 18
 
       # First branch carries a span pointing to the reply declaration.
       assert [branch | _] = transition.branches
@@ -158,9 +158,9 @@ defmodule Accord.ViolationSpanTest do
       {:ok, transition} =
         TransitionTable.lookup(compiled.transition_table, :ready, {:increment, "bad"})
 
-      # Transition span still points at the on-declaration line.
-      assert %Pentiment.Span.Position{} = transition.span
-      assert transition.span.start_line == 13
+      # Transition span covers the full message spec.
+      assert %Pentiment.Span.Search{} = transition.span
+      assert transition.span.line == 13
 
       # Argument names are still captured.
       assert transition.message_arg_names == ["amount"]
@@ -192,9 +192,9 @@ defmodule Accord.ViolationSpanTest do
       {:ok, transition} =
         TransitionTable.lookup(compiled.transition_table, :waiting, {:bet, 9999})
 
-      # Transition span still points at the on-declaration (line 17).
-      assert %Pentiment.Span.Position{} = transition.span
-      assert transition.span.start_line == 17
+      # Transition span covers the full message spec.
+      assert %Pentiment.Span.Search{} = transition.span
+      assert transition.span.line == 17
 
       # Guard pair carries its own span pointing at the guard keyword (line 18).
       assert %Pentiment.Span.Search{} = transition.guard.span
