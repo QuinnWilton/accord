@@ -173,12 +173,41 @@ defmodule Accord.Violation.Report do
 
   defp lookup_transition_span(%Violation{} = violation, %Compiled{} = compiled) do
     case TransitionTable.lookup(compiled.transition_table, violation.state, violation.message) do
-      {:ok, transition} -> transition.span
+      {:ok, transition} -> span_for_violation(violation.kind, violation, transition)
       :error -> nil
     end
   end
 
-  defp label_message(:invalid_reply), do: "transition defined here"
+  # Guard failures point at the guard keyword, not the transition.
+  defp span_for_violation(:guard_failed, _violation, transition) do
+    case transition.guard do
+      %{span: span} when not is_nil(span) -> span
+      _ -> transition.span
+    end
+  end
+
+  # Argument type violations point at the specific argument's type annotation.
+  defp span_for_violation(:argument_type, violation, transition) do
+    pos = violation.context[:position]
+
+    if is_integer(pos) and pos >= 0 do
+      Enum.at(transition.message_arg_spans, pos) || transition.span
+    else
+      transition.span
+    end
+  end
+
+  # Invalid reply violations point at the reply declaration, not the message tag.
+  defp span_for_violation(:invalid_reply, _violation, transition) do
+    case transition.branches do
+      [%{span: span} | _] when not is_nil(span) -> span
+      _ -> transition.span
+    end
+  end
+
+  defp span_for_violation(_kind, _violation, transition), do: transition.span
+
+  defp label_message(:invalid_reply), do: "reply type defined here"
   defp label_message(:argument_type), do: "type constraint defined here"
   defp label_message(:guard_failed), do: "guarded transition defined here"
   defp label_message(:invariant_violated), do: "property defined here"
