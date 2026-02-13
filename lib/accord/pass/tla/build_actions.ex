@@ -596,6 +596,4 @@ defmodule Accord.Pass.TLA.BuildActions do
     |> Enum.map(&String.capitalize/1)
     |> Enum.join()
   end
-
-  defp camelize(a) when is_atom(a), do: camelize(Atom.to_string(a))
 end

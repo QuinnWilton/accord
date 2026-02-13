@@ -612,12 +612,7 @@ defmodule Accord.Protocol do
     }
 
     # Run validation pipeline.
-    ir =
-      case compile_ir(ir, env) do
-        {:ok, validated_ir} -> validated_ir
-        # compile_ir raises on error, so this is defensive.
-        {:error, _} -> ir
-      end
+    {:ok, ir} = compile_ir(ir, env)
 
     # Emit reachability warnings through the compiler.
     for report <- Accord.Pass.ValidateReachability.warnings(ir) do
@@ -695,7 +690,7 @@ defmodule Accord.Protocol do
           if ir.source_file && File.exists?(ir.source_file) do
             Pentiment.Source.from_file(ir.source_file)
           else
-            nil
+            %{}
           end
 
         message =
@@ -722,23 +717,14 @@ defmodule Accord.Protocol do
         project_root: project_root
       )
 
-    case Accord.TLA.Compiler.compile(ir, config) do
-      {:ok, result} ->
-        # Write .tla and .cfg to _build/accord/.
-        write_tla_files(ir.name, result, env)
+    {:ok, result} = Accord.TLA.Compiler.compile(ir, config)
 
-        # Build span map for __tla_span__/1.
-        span_map = SpanMap.build(ir, result.actions)
-        {:ok, Map.put(result, :span_map, span_map)}
+    # Write .tla and .cfg to _build/accord/.
+    write_tla_files(ir.name, result, env)
 
-      {:error, reason} ->
-        IO.warn(
-          "TLA+ compilation failed for #{inspect(ir.name)}: #{inspect(reason)}",
-          Macro.Env.stacktrace(env)
-        )
-
-        :error
-    end
+    # Build span map for __tla_span__/1.
+    span_map = SpanMap.build(ir, result.actions)
+    {:ok, Map.put(result, :span_map, span_map)}
   rescue
     e ->
       IO.warn(

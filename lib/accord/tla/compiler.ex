@@ -23,7 +23,7 @@ defmodule Accord.TLA.Compiler do
   Compiles a protocol IR to TLA+ module and config file strings.
   """
   @spec compile(IR.t(), ModelConfig.t()) :: {:ok, result()}
-  def compile(%IR{} = ir, %ModelConfig{} = config \\ %ModelConfig{}) do
+  def compile(%IR{} = ir, %ModelConfig{} = config) do
     with {:ok, state_space} <- BuildStateSpace.run(ir, config),
          {:ok, actions} <- BuildActions.run(ir, state_space, config),
          {:ok, properties} <- BuildProperties.run(ir),

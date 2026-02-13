@@ -67,11 +67,11 @@ defmodule Accord.Violation.Report do
           source = Source.from_file(path)
           Pentiment.format(report, source)
         else
-          Pentiment.format(report, nil)
+          Pentiment.format(report, %{})
         end
 
       nil ->
-        Pentiment.format(report, nil)
+        Pentiment.format(report, %{})
     end
   end
 
@@ -84,7 +84,7 @@ defmodule Accord.Violation.Report do
   @spec format(Violation.t()) :: String.t()
   def format(%Violation{} = violation) do
     report = build_report(violation)
-    Pentiment.format(report, nil)
+    Pentiment.format(report, %{})
   end
 
   @doc """

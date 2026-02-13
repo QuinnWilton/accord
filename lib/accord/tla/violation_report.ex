@@ -314,10 +314,10 @@ defmodule Accord.TLA.ViolationReport do
         Pentiment.format(report, source)
 
       source_file != nil ->
-        Pentiment.format(report, nil)
+        Pentiment.format(report, %{})
 
       true ->
-        Pentiment.format(report, nil)
+        Pentiment.format(report, %{})
     end
   end
 

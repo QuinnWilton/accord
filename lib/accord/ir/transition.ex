@@ -7,7 +7,7 @@ defmodule Accord.IR.Transition do
   one or more branches mapping reply types to next states.
   """
 
-  @type guard_pair :: %{fun: function(), ast: Macro.t()}
+  @type guard_pair :: %{fun: function(), ast: Macro.t(), span: Pentiment.Span.t() | nil}
 
   @type t :: %__MODULE__{
           from: atom() | nil,

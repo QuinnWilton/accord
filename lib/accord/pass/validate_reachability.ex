@@ -39,16 +39,16 @@ defmodule Accord.Pass.ValidateReachability do
 
   # BFS from initial state, following all transition targets.
   defp compute_reachable(%IR{initial: initial, states: states, anystate: anystate}) do
-    bfs([initial], MapSet.new(), states, anystate)
+    bfs([initial], %{}, states, anystate)
   end
 
   defp bfs([], visited, _states, _anystate), do: visited
 
   defp bfs([current | rest], visited, states, anystate) do
-    if MapSet.member?(visited, current) do
+    if Map.has_key?(visited, current) do
       bfs(rest, visited, states, anystate)
     else
-      visited = MapSet.put(visited, current)
+      visited = Map.put(visited, current, true)
 
       state = Map.get(states, current, %IR.State{name: current})
 
@@ -63,7 +63,7 @@ defmodule Accord.Pass.ValidateReachability do
             end
           end)
         end)
-        |> Enum.reject(&MapSet.member?(visited, &1))
+        |> Enum.reject(&Map.has_key?(visited, &1))
 
       bfs(next_states ++ rest, visited, states, anystate)
     end
@@ -72,7 +72,7 @@ defmodule Accord.Pass.ValidateReachability do
   defp check_unreachable_states(warnings, ir, reachable, all_states) do
     unreachable =
       all_states
-      |> Enum.reject(&MapSet.member?(reachable, &1))
+      |> Enum.reject(&Map.has_key?(reachable, &1))
       |> Enum.reject(fn name -> ir.states[name].terminal end)
 
     Enum.reduce(unreachable, warnings, fn name, acc ->
@@ -91,7 +91,7 @@ defmodule Accord.Pass.ValidateReachability do
   defp check_terminal_reachable(warnings, ir, reachable) do
     has_terminal =
       Enum.any?(ir.states, fn {name, state} ->
-        state.terminal and MapSet.member?(reachable, name)
+        state.terminal and Map.has_key?(reachable, name)
       end)
 
     # Only check if there are terminal states defined at all.
