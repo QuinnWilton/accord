@@ -7,21 +7,21 @@ defmodule Accord.Test.Counter.Protocol do
   """
   use Accord.Protocol
 
-  initial(:ready)
+  initial :ready
 
   state :ready do
-    on({:increment, _amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready)
-    on({:decrement, _amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready)
-    on(:get, reply: {:value, integer()}, goto: :ready)
-    on(:reset, reply: {:ok, integer()}, goto: :ready)
-    on(:stop, reply: :stopped, goto: :stopped)
+    on {:increment, _amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
+    on {:decrement, _amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
+    on :get, reply: {:value, integer()}, goto: :ready
+    on :reset, reply: {:ok, integer()}, goto: :ready
+    on :stop, reply: :stopped, goto: :stopped
   end
 
-  state(:stopped, terminal: true)
+  state :stopped, terminal: true
 
   anystate do
-    on(:ping, reply: :pong)
-    cast(:heartbeat)
+    on :ping, reply: :pong
+    cast :heartbeat
   end
 end
 

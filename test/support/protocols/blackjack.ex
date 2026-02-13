@@ -8,59 +8,59 @@ defmodule Accord.Test.Blackjack.Protocol do
   """
   use Accord.Protocol
 
-  initial(:waiting)
+  initial :waiting
 
-  track(:balance, :non_neg_integer, default: 1000)
-  track(:current_bet, :non_neg_integer, default: 0)
+  track :balance, :non_neg_integer, default: 1000
+  track :current_bet, :non_neg_integer, default: 0
 
   state :waiting do
     on {:bet, _chips :: pos_integer()} do
-      guard(fn {:bet, chips}, tracks -> chips <= tracks.balance end)
-      update(fn {:bet, chips}, _reply, tracks -> %{tracks | current_bet: chips} end)
-      branch({:ok, non_neg_integer()}, goto: :player_turn)
+      guard fn {:bet, chips}, tracks -> chips <= tracks.balance end
+      update fn {:bet, chips}, _reply, tracks -> %{tracks | current_bet: chips} end
+      branch {:ok, non_neg_integer()}, goto: :player_turn
     end
   end
 
   state :player_turn do
     on :hit do
-      branch({:card, integer()}, goto: :player_turn)
-      branch({:bust, integer()}, goto: :resolved)
+      branch {:card, integer()}, goto: :player_turn
+      branch {:bust, integer()}, goto: :resolved
 
-      update(fn _msg, reply, tracks ->
+      update fn _msg, reply, tracks ->
         case reply do
           {:bust, _} -> %{tracks | balance: tracks.balance - tracks.current_bet}
           {:card, _} -> tracks
         end
-      end)
+      end
     end
 
-    on(:stand, reply: {:stood, integer()}, goto: :dealer_turn)
+    on :stand, reply: {:stood, integer()}, goto: :dealer_turn
   end
 
   state :dealer_turn do
     on :reveal do
-      branch({:player_wins, non_neg_integer()}, goto: :resolved)
-      branch({:dealer_wins, non_neg_integer()}, goto: :resolved)
-      branch({:push, non_neg_integer()}, goto: :resolved)
+      branch {:player_wins, non_neg_integer()}, goto: :resolved
+      branch {:dealer_wins, non_neg_integer()}, goto: :resolved
+      branch {:push, non_neg_integer()}, goto: :resolved
 
-      update(fn _msg, reply, tracks ->
+      update fn _msg, reply, tracks ->
         case reply do
           {:player_wins, _} -> %{tracks | balance: tracks.balance + tracks.current_bet}
           {:dealer_wins, _} -> %{tracks | balance: tracks.balance - tracks.current_bet}
           {:push, _} -> tracks
         end
-      end)
+      end
     end
   end
 
-  state(:resolved, terminal: true)
+  state :resolved, terminal: true
 
   anystate do
-    on(:balance, reply: non_neg_integer())
+    on :balance, reply: non_neg_integer()
   end
 
   property :solvent do
-    invariant(fn tracks -> tracks.balance >= 0 end)
+    invariant fn tracks -> tracks.balance >= 0 end
   end
 end
 

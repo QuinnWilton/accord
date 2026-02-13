@@ -9,198 +9,190 @@ defmodule Accord.ProtocolTest do
   defmodule SimpleProtocol do
     use Accord.Protocol
 
-    initial(:ready)
+    initial :ready
 
     state :ready do
-      on(:ping, reply: :pong, goto: :ready)
-      on(:stop, reply: :stopped, goto: :stopped)
+      on :ping, reply: :pong, goto: :ready
+      on :stop, reply: :stopped, goto: :stopped
     end
 
-    state(:stopped, terminal: true)
+    state :stopped, terminal: true
   end
 
   defmodule TypedProtocol do
     use Accord.Protocol
 
-    initial(:ready)
+    initial :ready
 
     state :ready do
-      on({:increment, _amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready)
-      on({:get, _key :: atom()}, reply: term(), goto: :ready)
-      on(:stop, reply: :stopped, goto: :stopped)
+      on {:increment, _amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
+      on {:get, _key :: atom()}, reply: term(), goto: :ready
+      on :stop, reply: :stopped, goto: :stopped
     end
 
-    state(:stopped, terminal: true)
+    state :stopped, terminal: true
   end
 
   defmodule AnystateProtocol do
     use Accord.Protocol
 
-    initial(:ready)
+    initial :ready
 
     state :ready do
-      on(:stop, reply: :stopped, goto: :stopped)
+      on :stop, reply: :stopped, goto: :stopped
     end
 
-    state(:stopped, terminal: true)
+    state :stopped, terminal: true
 
     anystate do
-      on(:ping, reply: :pong)
-      cast(:heartbeat)
+      on :ping, reply: :pong
+      cast :heartbeat
     end
   end
 
   defmodule MultiStateProtocol do
     use Accord.Protocol
 
-    initial(:idle)
+    initial :idle
 
     state :idle do
-      on(:start, reply: :ok, goto: :running)
+      on :start, reply: :ok, goto: :running
     end
 
     state :running do
-      on(:pause, reply: :ok, goto: :paused)
-      on(:stop, reply: :ok, goto: :done)
+      on :pause, reply: :ok, goto: :paused
+      on :stop, reply: :ok, goto: :done
     end
 
     state :paused do
-      on(:resume, reply: :ok, goto: :running)
-      on(:stop, reply: :ok, goto: :done)
+      on :resume, reply: :ok, goto: :running
+      on :stop, reply: :ok, goto: :done
     end
 
-    state(:done, terminal: true)
+    state :done, terminal: true
   end
 
   defmodule BlockFormProtocol do
     use Accord.Protocol
 
-    initial(:unlocked)
+    initial :unlocked
 
-    track(:holder, :term, default: nil)
-    track(:fence_token, :non_neg_integer, default: 0)
+    track :holder, :term, default: nil
+    track :fence_token, :non_neg_integer, default: 0
 
     state :unlocked do
-      on {:acquire, _client_id :: term(), _token :: pos_integer()} do
-        reply({:ok, pos_integer()})
-        goto(:locked)
+      on {:acquire, _client_id :: term()} do
+        reply {:ok, pos_integer()}
+        goto :locked
 
-        guard(fn {:acquire, _client_id, token}, tracks ->
-          token > tracks.fence_token
-        end)
-
-        update(fn {:acquire, client_id, token}, _reply, tracks ->
-          %{tracks | holder: client_id, fence_token: token}
-        end)
+        update fn {:acquire, cid}, {:ok, token}, tracks ->
+          %{tracks | holder: cid, fence_token: token}
+        end
       end
     end
 
     state :locked do
       on {:release, _client_id :: term(), _token :: pos_integer()} do
-        reply(:ok)
-        goto(:unlocked)
+        reply :ok
+        goto :unlocked
 
-        guard(fn {:release, client_id, token}, tracks ->
+        guard fn {:release, client_id, token}, tracks ->
           client_id == tracks.holder and token == tracks.fence_token
-        end)
+        end
 
-        update(fn _msg, _reply, tracks -> %{tracks | holder: nil} end)
+        update fn _msg, _reply, tracks -> %{tracks | holder: nil} end
       end
     end
 
-    state(:expired, terminal: true)
+    state :expired, terminal: true
 
     anystate do
-      on(:ping, reply: :pong)
+      on :ping, reply: :pong
     end
   end
 
   defmodule BranchingProtocol do
     use Accord.Protocol
 
-    initial(:waiting)
+    initial :waiting
 
-    track(:balance, :non_neg_integer, default: 1000)
+    track :balance, :non_neg_integer, default: 1000
 
     state :waiting do
       on {:bet, _chips :: pos_integer()} do
-        guard(fn {:bet, chips}, tracks -> chips <= tracks.balance end)
-        branch({:ok, term()}, goto: :dealt)
-        branch({:error, :insufficient_funds}, goto: :waiting)
+        guard fn {:bet, chips}, tracks -> chips <= tracks.balance end
+        branch {:ok, term()}, goto: :dealt
+        branch {:error, :insufficient_funds}, goto: :waiting
       end
     end
 
-    state(:dealt, terminal: true)
+    state :dealt, terminal: true
   end
 
   defmodule PropertyProtocol do
     use Accord.Protocol
 
-    initial(:unlocked)
+    initial :unlocked
 
-    role(:client)
-    role(:lock_service)
+    role :client
+    role :lock_service
 
-    track(:holder, :term, default: nil)
-    track(:fence_token, :non_neg_integer, default: 0)
+    track :holder, :term, default: nil
+    track :fence_token, :non_neg_integer, default: 0
 
     state :unlocked do
-      on {:acquire, _cid :: term(), _token :: pos_integer()} do
-        reply({:ok, pos_integer()})
-        goto(:locked)
+      on {:acquire, _cid :: term()} do
+        reply {:ok, pos_integer()}
+        goto :locked
 
-        guard(fn {:acquire, _cid, token}, tracks ->
-          token > tracks.fence_token
-        end)
-
-        update(fn {:acquire, cid, token}, _reply, tracks ->
+        update fn {:acquire, cid}, {:ok, token}, tracks ->
           %{tracks | holder: cid, fence_token: token}
-        end)
+        end
       end
 
-      on(:stop, reply: :stopped, goto: :stopped)
+      on :stop, reply: :stopped, goto: :stopped
     end
 
     state :locked do
       on {:release, _cid :: term(), _token :: pos_integer()} do
-        reply(:ok)
-        goto(:unlocked)
+        reply :ok
+        goto :unlocked
       end
 
-      on(:stop, reply: :stopped, goto: :stopped)
+      on :stop, reply: :stopped, goto: :stopped
     end
 
-    state(:stopped, terminal: true)
+    state :stopped, terminal: true
 
     anystate do
-      on(:ping, reply: :pong)
-      cast(:heartbeat)
+      on :ping, reply: :pong
+      cast :heartbeat
     end
 
     property :monotonic_tokens do
-      action(fn old, new -> new.fence_token >= old.fence_token end)
+      action fn old, new -> new.fence_token >= old.fence_token end
     end
 
     property :holder_set do
-      invariant(:locked, fn {:acquire, _, _}, tracks ->
+      invariant :locked, fn {:acquire, _}, tracks ->
         tracks.holder != nil
-      end)
+      end
     end
 
     property :token_non_negative do
-      invariant(fn tracks -> tracks.fence_token >= 0 end)
+      invariant fn tracks -> tracks.fence_token >= 0 end
     end
 
     property :no_starvation do
-      liveness(in_state(:locked), leads_to: in_state(:unlocked))
+      liveness in_state(:locked), leads_to: in_state(:unlocked)
     end
 
     property :token_bounded do
-      bounded(:fence_token, max: 1000)
+      bounded :fence_token, max: 1000
     end
 
     property :lock_reachable do
-      reachable(:locked)
+      reachable :locked
     end
   end
 
@@ -361,13 +353,20 @@ defmodule Accord.ProtocolTest do
       assert %Track{type: :non_neg_integer, default: 0} = fence
     end
 
-    test "block form transition has guard" do
+    test "acquire transition has no guard" do
       ir = BlockFormProtocol.__ir__()
       [acquire] = ir.states[:unlocked].transitions
 
-      assert acquire.guard != nil
-      assert is_function(acquire.guard.fun, 2)
-      assert acquire.guard.ast != nil
+      assert acquire.guard == nil
+    end
+
+    test "release transition has guard" do
+      ir = BlockFormProtocol.__ir__()
+      [release] = ir.states[:locked].transitions
+
+      assert release.guard != nil
+      assert is_function(release.guard.fun, 2)
+      assert release.guard.ast != nil
     end
 
     test "block form transition has update" do
@@ -388,11 +387,12 @@ defmodule Accord.ProtocolTest do
 
     test "guard function evaluates correctly" do
       ir = BlockFormProtocol.__ir__()
-      [acquire] = ir.states[:unlocked].transitions
+      [release] = ir.states[:locked].transitions
 
-      tracks = %{fence_token: 5, holder: nil}
-      assert acquire.guard.fun.({:acquire, :c1, 10}, tracks) == true
-      assert acquire.guard.fun.({:acquire, :c1, 3}, tracks) == false
+      tracks = %{fence_token: 5, holder: :c1}
+      assert release.guard.fun.({:release, :c1, 5}, tracks) == true
+      assert release.guard.fun.({:release, :c2, 5}, tracks) == false
+      assert release.guard.fun.({:release, :c1, 3}, tracks) == false
     end
 
     test "update function works correctly" do
@@ -400,7 +400,7 @@ defmodule Accord.ProtocolTest do
       [acquire] = ir.states[:unlocked].transitions
 
       tracks = %{fence_token: 0, holder: nil}
-      new_tracks = acquire.update.fun.({:acquire, :c1, 5}, {:ok, 5}, tracks)
+      new_tracks = acquire.update.fun.({:acquire, :c1}, {:ok, 5}, tracks)
       assert new_tracks.holder == :c1
       assert new_tracks.fence_token == 5
     end
@@ -599,10 +599,10 @@ defmodule Accord.ProtocolTest do
         defmodule BadGotoTarget do
           use Accord.Protocol
 
-          initial(:ready)
+          initial :ready
 
           state :ready do
-            on(:ping, reply: :pong, goto: :nonexistent)
+            on :ping, reply: :pong, goto: :nonexistent
           end
         end
       end
@@ -614,7 +614,7 @@ defmodule Accord.ProtocolTest do
       assert_raise CompileError, ~r/must declare `initial :state`/, fn ->
         defmodule BadNoInitial do
           use Accord.Protocol
-          state(:ready, terminal: true)
+          state :ready, terminal: true
         end
       end
     end
@@ -624,11 +624,11 @@ defmodule Accord.ProtocolTest do
         defmodule BadAnystateGoto do
           use Accord.Protocol
 
-          initial(:ready)
-          state(:ready, terminal: true)
+          initial :ready
+          state :ready, terminal: true
 
           anystate do
-            on(:ping, reply: :pong, goto: :ready)
+            on :ping, reply: :pong, goto: :ready
           end
         end
       end
@@ -639,10 +639,10 @@ defmodule Accord.ProtocolTest do
         defmodule BadNoGoto do
           use Accord.Protocol
 
-          initial(:ready)
+          initial :ready
 
           state :ready do
-            on(:ping, reply: :pong)
+            on :ping, reply: :pong
           end
         end
       end
