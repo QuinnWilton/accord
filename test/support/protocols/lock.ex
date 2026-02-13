@@ -16,7 +16,9 @@ defmodule Accord.Test.Lock.Protocol do
 
   state :unlocked do
     on {:acquire, _client_id :: term()} do
-      reply {:ok, pos_integer()}
+      reply {:ok, pos_integer()},
+        where: fn {:ok, token}, tracks -> token > tracks.fence_token end
+
       goto :locked
 
       update fn {:acquire, cid}, {:ok, token}, tracks ->
