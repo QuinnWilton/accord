@@ -21,6 +21,7 @@ defmodule Accord.Property.BlackjackStatemTest do
   use PropCheck.StateM.ModelDSL
 
   @moduletag :property
+  @moduletag :capture_log
 
   alias Accord.Monitor
   alias Accord.Test.Blackjack

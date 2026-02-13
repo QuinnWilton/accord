@@ -16,6 +16,7 @@ defmodule Accord.Property.LockStatemTest do
   use PropCheck.StateM.ModelDSL
 
   @moduletag :property
+  @moduletag :capture_log
 
   alias Accord.Monitor
   alias Accord.Test.FaultyServer
