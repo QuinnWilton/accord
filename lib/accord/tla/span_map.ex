@@ -54,10 +54,23 @@ defmodule Accord.TLA.SpanMap do
   end
 
   # Map CamelCase property names to property declaration spans.
+  # Also maps state-qualified names for local invariants (e.g.,
+  # "HolderConsistencyUnlocked" from `:holder_consistency` + `:unlocked`).
   defp build_property_spans(%IR{properties: properties}) do
-    for prop <- properties, prop.span != nil, into: %{} do
-      {camelize(prop.name), prop.span}
-    end
+    base =
+      for prop <- properties, prop.span != nil do
+        {camelize(prop.name), prop.span}
+      end
+
+    qualified =
+      for prop <- properties,
+          prop.span != nil,
+          check <- prop.checks,
+          check.kind == :local_invariant do
+        {camelize(prop.name) <> camelize(check.spec.state), prop.span}
+      end
+
+    Map.new(base ++ qualified)
   end
 
   # Map action names to their originating transition spans.

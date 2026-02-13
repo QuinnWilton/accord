@@ -26,7 +26,7 @@ defmodule Mix.Tasks.Accord.Check do
 
   use Mix.Task
 
-  alias Accord.TLA.TLCParser
+  alias Accord.TLA.{TLCParser, ViolationReport}
 
   @shortdoc "Run TLC model checking on Accord protocols"
 
@@ -210,86 +210,16 @@ defmodule Mix.Tasks.Accord.Check do
     end
   end
 
-  defp report_failure(mod, {:error, %{kind: kind, property: property, trace: trace}, stats}) do
-    label =
-      case kind do
-        :invariant -> "invariant #{property || "unknown"} violated"
-        :action_property -> "action property #{property || "unknown"} violated"
-        :deadlock -> "deadlock reached"
-        :temporal -> "temporal property violated"
-      end
+  defp report_failure(mod, {:error, %{kind: _, trace: _} = violation, stats}) do
+    label = violation_label(violation)
 
     Mix.shell().info(
       "#{IO.ANSI.red()}✗#{IO.ANSI.reset()} #{inspect(mod)} — #{label} " <>
         "(#{stats.distinct_states} states explored)"
     )
 
-    # Render counterexample trace.
-    if trace != [] do
-      Mix.shell().info("\n  Counterexample trace:\n")
-
-      for entry <- trace do
-        action_label =
-          case entry.action do
-            nil -> "Initial"
-            name -> name
-          end
-
-        Mix.shell().info("  State #{entry.number}: #{action_label}")
-
-        # Map action name to source span if available.
-        if entry.action && function_exported?(mod, :__tla_span__, 1) do
-          case mod.__tla_span__(entry.action) do
-            %Pentiment.Span.Position{} = span ->
-              ir = mod.__ir__()
-              file = ir.source_file || "unknown"
-
-              Mix.shell().info(
-                "    #{IO.ANSI.cyan()}→ #{file}:#{span.start_line}#{IO.ANSI.reset()}"
-              )
-
-            _ ->
-              :ok
-          end
-        end
-
-        for {var, val} <- Enum.sort(entry.assignments) do
-          # Map variable name to source span.
-          span_note =
-            if function_exported?(mod, :__tla_span__, 1) do
-              case mod.__tla_span__(var) do
-                %Pentiment.Span.Position{} = span ->
-                  " (#{Path.basename(mod.__ir__().source_file || "")}:#{span.start_line})"
-
-                _ ->
-                  ""
-              end
-            else
-              ""
-            end
-
-          Mix.shell().info("    #{var} = #{val}#{span_note}")
-        end
-
-        Mix.shell().info("")
-      end
-    end
-
-    # Map violated property to source span.
-    if property && function_exported?(mod, :__tla_span__, 1) do
-      case mod.__tla_span__(property) do
-        %Pentiment.Span.Position{} = span ->
-          ir = mod.__ir__()
-          file = ir.source_file || "unknown"
-
-          Mix.shell().info(
-            "  Property defined at: #{IO.ANSI.cyan()}#{file}:#{span.start_line}#{IO.ANSI.reset()}\n"
-          )
-
-        _ ->
-          :ok
-      end
-    end
+    formatted = ViolationReport.format(violation, mod)
+    Mix.shell().info("\n" <> formatted)
   end
 
   defp report_failure(mod, {:error, reason}) do
@@ -310,4 +240,15 @@ defmodule Mix.Tasks.Accord.Check do
   defp report_failure(mod, {:error, reason, detail}) do
     Mix.shell().info("#{IO.ANSI.red()}✗#{IO.ANSI.reset()} #{inspect(mod)} — #{reason}: #{detail}")
   end
+
+  defp violation_label(%{kind: :invariant, property: property}) do
+    "invariant #{property || "unknown"} violated"
+  end
+
+  defp violation_label(%{kind: :action_property, property: property}) do
+    "action property #{property || "unknown"} violated"
+  end
+
+  defp violation_label(%{kind: :deadlock}), do: "deadlock reached"
+  defp violation_label(%{kind: :temporal}), do: "temporal property violated"
 end
