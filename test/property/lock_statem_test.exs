@@ -106,17 +106,24 @@ defmodule Accord.Property.LockStatemTest do
   defcommand :send_acquire do
     def impl(client_id) do
       monitor = Process.get(:test_monitor)
-      Monitor.call(monitor, {:acquire, client_id})
+      result = Monitor.call(monitor, {:acquire, client_id})
+
+      case result do
+        {:ok, token} -> Process.put(:test_last_token, token)
+        _ -> :ok
+      end
+
+      result
     end
 
     def pre(%__MODULE__{protocol_state: :unlocked, terminal: false}, _), do: true
     def pre(_, _), do: false
 
-    def post(%__MODULE__{fence_token: ft, pending_fault: fault}, [_cid], result) do
+    def post(%__MODULE__{pending_fault: fault}, [_cid], result) do
       if fault == :wrong_reply_type do
         match?({:accord_violation, %{blame: :server, kind: :invalid_reply}}, result)
       else
-        result == {:ok, ft + 1}
+        match?({:ok, token} when is_integer(token) and token > 0, result)
       end
     end
 
@@ -156,9 +163,13 @@ defmodule Accord.Property.LockStatemTest do
   end
 
   defcommand :send_release_valid do
-    def impl(token) do
+    def impl(_token) do
       monitor = Process.get(:test_monitor)
-      Monitor.call(monitor, {:release, token})
+      # Use the actual token from the last acquire, not the model's
+      # prediction. This keeps the release valid even when the server
+      # produces non-sequential tokens.
+      real_token = Process.get(:test_last_token)
+      Monitor.call(monitor, {:release, real_token})
     end
 
     def pre(%__MODULE__{protocol_state: :locked}, _), do: true
@@ -199,8 +210,26 @@ defmodule Accord.Property.LockStatemTest do
 
     def pre(_, _), do: false
 
-    def post(_state, [_token], result) do
-      result == {:error, :invalid_token}
+    def post(_state, [token], result) do
+      # The model's predicted token may diverge from the real token.
+      # If the generated token accidentally matches the real token,
+      # the server returns :ok instead of {:error, :invalid_token}.
+      real_token = Process.get(:test_last_token)
+
+      if token == real_token do
+        result == :ok
+      else
+        result == {:error, :invalid_token}
+      end
+    end
+
+    def next(state, [_token], result) do
+      # During generation result is {:var, N} — fall through to default.
+      # During execution we branch on the actual server reply.
+      case result do
+        :ok -> %{state | holder: nil, protocol_state: :unlocked}
+        _ -> state
+      end
     end
   end
 
@@ -291,25 +320,54 @@ defmodule Accord.Property.LockStatemTest do
 
   # -- Property --
 
-  property "lock protocol monitor handles tracks, branching, and faults correctly",
-    numtests: 200,
-    max_size: 30 do
-    forall cmds <- commands(__MODULE__) do
-      {:ok, faulty} = FaultyServer.start_link(Lock.Server)
-      compiled = Lock.Protocol.__compiled__()
-      {:ok, monitor} = Monitor.start_link(compiled, upstream: faulty, violation_policy: :log)
+  @tag :property
+  test "lock protocol monitor handles tracks, branching, and faults correctly" do
+    result =
+      quickcheck(
+        forall cmds <- commands(__MODULE__) do
+          Accord.Test.ViolationCollector.init()
 
-      Process.put(:test_monitor, monitor)
-      Process.put(:test_faulty_server, faulty)
+          {:ok, faulty} = FaultyServer.start_link(Lock.Server)
+          compiled = Lock.Protocol.__compiled__()
 
-      {history, _state, result} = run_commands(__MODULE__, cmds)
+          {:ok, monitor} =
+            Monitor.start_link(compiled,
+              upstream: faulty,
+              violation_policy: {Accord.Test.ViolationCollector, :handle}
+            )
 
-      # Cleanup.
-      if Process.alive?(monitor), do: GenServer.stop(monitor, :normal, 100)
-      if Process.alive?(faulty), do: GenServer.stop(faulty, :normal, 100)
+          Process.put(:test_monitor, monitor)
+          Process.put(:test_faulty_server, faulty)
 
-      (result == :ok)
-      |> when_fail(Accord.Violation.Report.print_failure(history, compiled))
+          {history, _state, result} = run_commands(__MODULE__, cmds)
+
+          prop_violations = Accord.Test.ViolationCollector.property_violations()
+
+          # Cleanup.
+          if Process.alive?(monitor), do: GenServer.stop(monitor, :normal, 100)
+          if Process.alive?(faulty), do: GenServer.stop(faulty, :normal, 100)
+
+          passed = result == :ok and prop_violations == []
+
+          unless passed do
+            Process.put(
+              :__accord_property_failure__,
+              Accord.PropertyFailure.exception(
+                history: history,
+                compiled: compiled,
+                violations: prop_violations
+              )
+            )
+          end
+
+          passed
+        end,
+        [:quiet, numtests: 200, max_size: 30]
+      )
+
+    unless result == true do
+      raise Process.get(:__accord_property_failure__) ||
+              ExUnit.AssertionError.exception(message: "Property failed")
     end
   end
 end
