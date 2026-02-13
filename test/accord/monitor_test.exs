@@ -336,4 +336,223 @@ defmodule Accord.MonitorTest do
       # now in :locked (no acquire transition), we verified the transition.
     end
   end
+
+  describe "property checking — invariant" do
+    defp invariant_ir do
+      update_fn = fn {:increment, _, amount}, _reply, tracks -> %{tracks | counter: tracks.counter + amount} end
+
+      %IR{
+        name: Test.InvariantProtocol,
+        initial: :ready,
+        tracks: [
+          %IR.Track{name: :counter, type: :integer, default: 0}
+        ],
+        states: %{
+          ready: %State{
+            name: :ready,
+            transitions: [
+              %Transition{
+                message_pattern: {:increment, :_, :_},
+                message_types: [:term, :integer],
+                kind: :call,
+                branches: [%Branch{reply_type: {:tagged, :ok, :integer}, next_state: :ready}],
+                update: %{fun: update_fn, ast: nil}
+              }
+            ]
+          }
+        },
+        properties: [
+          %IR.Property{
+            name: :counter_non_negative,
+            checks: [
+              %IR.Check{
+                kind: :invariant,
+                spec: %{fun: fn tracks -> tracks.counter >= 0 end, ast: nil}
+              }
+            ]
+          }
+        ]
+      }
+    end
+
+    test "invariant passes when satisfied" do
+      compiled = compile_ir(invariant_ir())
+
+      {:ok, server} =
+        EchoServer.start_link(%{
+          increment: fn {:increment, _, amount} -> {:ok, amount} end
+        })
+
+      {:ok, monitor} = start_monitor(compiled, server)
+
+      assert {:ok, 5} = Monitor.call(monitor, {:increment, :a, 5})
+      assert Process.alive?(monitor)
+    end
+
+    test "invariant violation is detected" do
+      compiled = compile_ir(invariant_ir())
+
+      {:ok, server} =
+        EchoServer.start_link(%{
+          increment: fn {:increment, _, amount} -> {:ok, amount} end
+        })
+
+      {:ok, monitor} = start_monitor(compiled, server)
+
+      # Send a negative increment that will violate counter >= 0.
+      assert {:ok, -10} = Monitor.call(monitor, {:increment, :a, -10})
+
+      # With :log policy, monitor stays alive but logged the violation.
+      assert Process.alive?(monitor)
+    end
+  end
+
+  describe "property checking — action" do
+    defp action_ir do
+      update_fn = fn {:set, _, val}, _reply, tracks -> %{tracks | value: val} end
+
+      %IR{
+        name: Test.ActionProtocol,
+        initial: :ready,
+        tracks: [
+          %IR.Track{name: :value, type: :integer, default: 0}
+        ],
+        states: %{
+          ready: %State{
+            name: :ready,
+            transitions: [
+              %Transition{
+                message_pattern: {:set, :_, :_},
+                message_types: [:term, :integer],
+                kind: :call,
+                branches: [%Branch{reply_type: {:tagged, :ok, :integer}, next_state: :ready}],
+                update: %{fun: update_fn, ast: nil}
+              }
+            ]
+          }
+        },
+        properties: [
+          %IR.Property{
+            name: :monotonic_value,
+            checks: [
+              %IR.Check{
+                kind: :action,
+                spec: %{fun: fn old, new -> new.value >= old.value end, ast: nil}
+              }
+            ]
+          }
+        ]
+      }
+    end
+
+    test "action passes when satisfied" do
+      compiled = compile_ir(action_ir())
+
+      {:ok, server} =
+        EchoServer.start_link(%{
+          set: fn {:set, _, val} -> {:ok, val} end
+        })
+
+      {:ok, monitor} = start_monitor(compiled, server)
+
+      assert {:ok, 5} = Monitor.call(monitor, {:set, :a, 5})
+      assert {:ok, 10} = Monitor.call(monitor, {:set, :a, 10})
+      assert Process.alive?(monitor)
+    end
+
+    test "action violation is detected with :crash policy" do
+      compiled = compile_ir(action_ir())
+
+      {:ok, server} =
+        EchoServer.start_link(%{
+          set: fn {:set, _, val} -> {:ok, val} end
+        })
+
+      {:ok, monitor} = start_monitor(compiled, server, violation_policy: :crash)
+
+      Process.flag(:trap_exit, true)
+
+      # Increase is fine.
+      assert {:ok, 10} = Monitor.call(monitor, {:set, :a, 10})
+
+      # Decrease violates monotonicity — crash policy stops monitor.
+      assert {:ok, 5} = Monitor.call(monitor, {:set, :a, 5})
+
+      assert_receive {:EXIT, ^monitor, {:protocol_violation, violation}}
+      assert violation.kind == :action_violated
+      assert violation.blame == :property
+    end
+  end
+
+  describe "property checking — bounded" do
+    defp bounded_ir do
+      update_fn = fn {:add, amount}, _reply, tracks -> %{tracks | counter: tracks.counter + amount} end
+
+      %IR{
+        name: Test.BoundedProtocol,
+        initial: :ready,
+        tracks: [
+          %IR.Track{name: :counter, type: :integer, default: 0}
+        ],
+        states: %{
+          ready: %State{
+            name: :ready,
+            transitions: [
+              %Transition{
+                message_pattern: {:add, :_},
+                message_types: [:integer],
+                kind: :call,
+                branches: [%Branch{reply_type: {:tagged, :ok, :integer}, next_state: :ready}],
+                update: %{fun: update_fn, ast: nil}
+              }
+            ]
+          }
+        },
+        properties: [
+          %IR.Property{
+            name: :counter_bounded,
+            checks: [
+              %IR.Check{
+                kind: :bounded,
+                spec: %{track: :counter, max: 100}
+              }
+            ]
+          }
+        ]
+      }
+    end
+
+    test "bounded passes within limit" do
+      compiled = compile_ir(bounded_ir())
+
+      {:ok, server} =
+        EchoServer.start_link(%{
+          add: fn {:add, amount} -> {:ok, amount} end
+        })
+
+      {:ok, monitor} = start_monitor(compiled, server)
+
+      assert {:ok, 50} = Monitor.call(monitor, {:add, 50})
+      assert Process.alive?(monitor)
+    end
+
+    test "bounded violation when exceeding limit" do
+      compiled = compile_ir(bounded_ir())
+
+      {:ok, server} =
+        EchoServer.start_link(%{
+          add: fn {:add, amount} -> {:ok, amount} end
+        })
+
+      {:ok, monitor} = start_monitor(compiled, server, violation_policy: :crash)
+
+      Process.flag(:trap_exit, true)
+
+      assert {:ok, 101} = Monitor.call(monitor, {:add, 101})
+
+      assert_receive {:EXIT, ^monitor, {:protocol_violation, violation}}
+      assert violation.kind == :invariant_violated
+      assert violation.blame == :property
+    end
+  end
 end

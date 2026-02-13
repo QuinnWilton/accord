@@ -25,7 +25,9 @@ defmodule Accord.Monitor do
     :upstream,
     :tracks,
     :violation_policy,
-    call_timeout: 5_000
+    call_timeout: 5_000,
+    # Property checking state.
+    correspondence: %{}
   ]
 
   # -- Public API --
@@ -162,12 +164,21 @@ defmodule Accord.Monitor do
     case Check.check_reply(reply, reply_pairs) do
       {:ok, next_state} ->
         actual_next = if next_state == :__same__, do: state, else: next_state
+        old_tracks = data.tracks
 
         # Apply update if present.
         new_tracks = apply_update(transition.update, message, reply, data.tracks)
-        new_data = %{data | tracks: new_tracks}
 
-        {:next_state, actual_next, new_data, [{:reply, from, reply}]}
+        # Check properties after successful transition.
+        case check_properties(message, actual_next, old_tracks, new_tracks, data) do
+          {:ok, updated_data} ->
+            updated_data = %{updated_data | tracks: new_tracks}
+            {:next_state, actual_next, updated_data, [{:reply, from, reply}]}
+
+          {:violation, violation, updated_data} ->
+            updated_data = %{updated_data | tracks: new_tracks}
+            handle_property_violation(violation, reply, from, actual_next, updated_data)
+        end
 
       {:error, _reason} ->
         valid = Enum.map(transition.branches, & &1.reply_type)
@@ -255,6 +266,119 @@ defmodule Accord.Monitor do
 
   defp apply_update(%{fun: update_fn}, message, reply, tracks) do
     update_fn.(message, reply, tracks)
+  end
+
+  # -- Property Checking --
+
+  defp check_properties(message, next_state, old_tracks, new_tracks, data) do
+    properties = data.compiled.ir.properties
+
+    Enum.reduce_while(properties, {:ok, data}, fn property, {:ok, acc_data} ->
+      case check_property_checks(property, message, next_state, old_tracks, new_tracks, acc_data) do
+        {:ok, updated_data} -> {:cont, {:ok, updated_data}}
+        {:violation, violation, updated_data} -> {:halt, {:violation, violation, updated_data}}
+      end
+    end)
+  end
+
+  defp check_property_checks(property, message, next_state, old_tracks, new_tracks, data) do
+    Enum.reduce_while(property.checks, {:ok, data}, fn check, {:ok, acc_data} ->
+      case check_single(check, property.name, message, next_state, old_tracks, new_tracks, acc_data) do
+        {:ok, updated_data} -> {:cont, {:ok, updated_data}}
+        {:violation, violation, updated_data} -> {:halt, {:violation, violation, updated_data}}
+      end
+    end)
+  end
+
+  defp check_single(%{kind: :invariant} = check, prop_name, _msg, next_state, _old, new_tracks, data) do
+    if check.spec.fun.(new_tracks) do
+      {:ok, data}
+    else
+      violation = Violation.invariant_violated(next_state, prop_name, new_tracks)
+      {:violation, violation, data}
+    end
+  end
+
+  defp check_single(%{kind: :local_invariant} = check, prop_name, message, next_state, _old, new_tracks, data) do
+    if check.spec.state == next_state do
+      if check.spec.fun.(message, new_tracks) do
+        {:ok, data}
+      else
+        violation = Violation.invariant_violated(next_state, prop_name, new_tracks)
+        {:violation, violation, data}
+      end
+    else
+      {:ok, data}
+    end
+  end
+
+  defp check_single(%{kind: :action} = check, prop_name, _msg, next_state, old_tracks, new_tracks, data) do
+    if check.spec.fun.(old_tracks, new_tracks) do
+      {:ok, data}
+    else
+      violation = Violation.action_violated(next_state, prop_name, old_tracks, new_tracks)
+      {:violation, violation, data}
+    end
+  end
+
+  defp check_single(%{kind: :bounded} = check, prop_name, _msg, next_state, _old, new_tracks, data) do
+    value = Map.get(new_tracks, check.spec.track)
+
+    if is_nil(value) or value <= check.spec.max do
+      {:ok, data}
+    else
+      violation = Violation.invariant_violated(next_state, prop_name, new_tracks)
+      {:violation, violation, data}
+    end
+  end
+
+  defp check_single(%{kind: :correspondence} = check, _prop_name, message, _next_state, _old, _new, data) do
+    tag = message_tag(message)
+    corr = data.correspondence
+
+    corr =
+      cond do
+        tag == check.spec.open ->
+          Map.update(corr, check.spec.open, 1, &(&1 + 1))
+
+        tag in check.spec.close ->
+          Map.update(corr, check.spec.open, 0, &max(&1 - 1, 0))
+
+        true ->
+          corr
+      end
+
+    {:ok, %{data | correspondence: corr}}
+  end
+
+  # Pass through other check kinds at runtime (design-time only).
+  defp check_single(_check, _prop_name, _msg, _next_state, _old, _new, data) do
+    {:ok, data}
+  end
+
+  defp message_tag(msg) when is_atom(msg), do: msg
+  defp message_tag(msg) when is_tuple(msg), do: elem(msg, 0)
+
+  # Property violations allow the reply to be forwarded (the transition
+  # succeeded) but then the violation is reported separately.
+  defp handle_property_violation(violation, reply, from, next_state, data) do
+    case data.violation_policy do
+      :log ->
+        log_violation(violation)
+        {:next_state, next_state, data, [{:reply, from, reply}]}
+
+      :reject ->
+        log_violation(violation)
+        {:next_state, next_state, data, [{:reply, from, reply}]}
+
+      :crash ->
+        {:stop_and_reply, {:protocol_violation, violation},
+         [{:reply, from, reply}]}
+
+      {mod, fun} ->
+        apply(mod, fun, [violation])
+        {:next_state, next_state, data, [{:reply, from, reply}]}
+    end
   end
 
   # -- Violation Handling --

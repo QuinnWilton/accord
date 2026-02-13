@@ -78,19 +78,21 @@ defmodule Accord.ViolationTest do
 
   describe "invariant_violated/3" do
     test "creates property blame" do
-      v = Violation.invariant_violated(:locked, {:acquire, :c1, 5}, :monotonic_tokens)
+      tracks = %{fence_token: -1}
+      v = Violation.invariant_violated(:locked, :monotonic_tokens, tracks)
 
       assert v.blame == :property
       assert v.kind == :invariant_violated
       assert v.context.property == :monotonic_tokens
+      assert v.context.tracks == tracks
     end
   end
 
-  describe "action_violated/5" do
+  describe "action_violated/4" do
     test "creates property blame with track snapshots" do
       old = %{fence_token: 3}
       new = %{fence_token: 1}
-      v = Violation.action_violated(:locked, {:acquire, :c1, 1}, :monotonic, old, new)
+      v = Violation.action_violated(:locked, :monotonic, old, new)
 
       assert v.blame == :property
       assert v.kind == :action_violated

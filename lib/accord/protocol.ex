@@ -575,7 +575,8 @@ defmodule Accord.Protocol do
          {:ok, ir} <- run_pass(Pass.ValidateStructure, ir, env),
          {:ok, ir} <- run_pass(Pass.ValidateTypes, ir, env),
          {:ok, ir} <- run_pass(Pass.ValidateDeterminism, ir, env),
-         {:ok, ir} <- run_pass(Pass.ValidateReachability, ir, env) do
+         {:ok, ir} <- run_pass(Pass.ValidateReachability, ir, env),
+         {:ok, ir} <- run_pass(Pass.ValidateProperties, ir, env) do
       {:ok, ir}
     end
   end

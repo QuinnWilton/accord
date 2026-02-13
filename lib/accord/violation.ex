@@ -156,27 +156,27 @@ defmodule Accord.Violation do
   @doc """
   Creates a property violation for a global or local invariant failure.
   """
-  @spec invariant_violated(atom(), term(), atom()) :: t()
-  def invariant_violated(state, message, property_name) do
+  @spec invariant_violated(atom(), atom(), map()) :: t()
+  def invariant_violated(state, property_name, tracks) do
     %__MODULE__{
       blame: :property,
       kind: :invariant_violated,
       state: state,
-      message: message,
-      context: %{property: property_name}
+      message: property_name,
+      context: %{property: property_name, tracks: tracks}
     }
   end
 
   @doc """
   Creates a property violation for an action property failure.
   """
-  @spec action_violated(atom(), term(), atom(), map(), map()) :: t()
-  def action_violated(state, message, property_name, old_tracks, new_tracks) do
+  @spec action_violated(atom(), atom(), map(), map()) :: t()
+  def action_violated(state, property_name, old_tracks, new_tracks) do
     %__MODULE__{
       blame: :property,
       kind: :action_violated,
       state: state,
-      message: message,
+      message: property_name,
       context: %{property: property_name, old_tracks: old_tracks, new_tracks: new_tracks}
     }
   end
