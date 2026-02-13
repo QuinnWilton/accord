@@ -217,12 +217,14 @@ defmodule Accord.Property.BlackjackStatemTest do
         new_total = pt + card
 
         if new_total > 21 do
-          %{state |
-            deck: rest,
-            player_total: new_total,
-            protocol_state: :resolved,
-            terminal: true,
-            balance: state.balance - state.current_bet}
+          %{
+            state
+            | deck: rest,
+              player_total: new_total,
+              protocol_state: :resolved,
+              terminal: true,
+              balance: state.balance - state.current_bet
+          }
         else
           %{state | deck: rest, player_total: new_total}
         end
@@ -297,11 +299,7 @@ defmodule Accord.Property.BlackjackStatemTest do
             true -> state.balance
           end
 
-        %{state |
-          deck: new_deck,
-          protocol_state: :resolved,
-          terminal: true,
-          balance: new_balance}
+        %{state | deck: new_deck, protocol_state: :resolved, terminal: true, balance: new_balance}
       end
     end
   end

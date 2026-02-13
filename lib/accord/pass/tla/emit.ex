@@ -8,7 +8,8 @@ defmodule Accord.Pass.TLA.Emit do
 
   alias Accord.TLA.{Action, Property, StateSpace}
 
-  @spec run(StateSpace.t(), [Action.t()], [Property.t()]) :: {:ok, %{tla: String.t(), cfg: String.t()}}
+  @spec run(StateSpace.t(), [Action.t()], [Property.t()]) ::
+          {:ok, %{tla: String.t(), cfg: String.t()}}
   def run(%StateSpace{} = ss, actions, properties) do
     tla = render_tla(ss, actions, properties)
     cfg = render_cfg(ss, actions, properties)

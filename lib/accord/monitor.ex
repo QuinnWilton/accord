@@ -283,14 +283,30 @@ defmodule Accord.Monitor do
 
   defp check_property_checks(property, message, next_state, old_tracks, new_tracks, data) do
     Enum.reduce_while(property.checks, {:ok, data}, fn check, {:ok, acc_data} ->
-      case check_single(check, property.name, message, next_state, old_tracks, new_tracks, acc_data) do
+      case check_single(
+             check,
+             property.name,
+             message,
+             next_state,
+             old_tracks,
+             new_tracks,
+             acc_data
+           ) do
         {:ok, updated_data} -> {:cont, {:ok, updated_data}}
         {:violation, violation, updated_data} -> {:halt, {:violation, violation, updated_data}}
       end
     end)
   end
 
-  defp check_single(%{kind: :invariant} = check, prop_name, _msg, next_state, _old, new_tracks, data) do
+  defp check_single(
+         %{kind: :invariant} = check,
+         prop_name,
+         _msg,
+         next_state,
+         _old,
+         new_tracks,
+         data
+       ) do
     if check.spec.fun.(new_tracks) do
       {:ok, data}
     else
@@ -299,7 +315,15 @@ defmodule Accord.Monitor do
     end
   end
 
-  defp check_single(%{kind: :local_invariant} = check, prop_name, message, next_state, _old, new_tracks, data) do
+  defp check_single(
+         %{kind: :local_invariant} = check,
+         prop_name,
+         message,
+         next_state,
+         _old,
+         new_tracks,
+         data
+       ) do
     if check.spec.state == next_state do
       if check.spec.fun.(message, new_tracks) do
         {:ok, data}
@@ -312,7 +336,15 @@ defmodule Accord.Monitor do
     end
   end
 
-  defp check_single(%{kind: :action} = check, prop_name, _msg, next_state, old_tracks, new_tracks, data) do
+  defp check_single(
+         %{kind: :action} = check,
+         prop_name,
+         _msg,
+         next_state,
+         old_tracks,
+         new_tracks,
+         data
+       ) do
     if check.spec.fun.(old_tracks, new_tracks) do
       {:ok, data}
     else
@@ -321,7 +353,15 @@ defmodule Accord.Monitor do
     end
   end
 
-  defp check_single(%{kind: :bounded} = check, prop_name, _msg, next_state, _old, new_tracks, data) do
+  defp check_single(
+         %{kind: :bounded} = check,
+         prop_name,
+         _msg,
+         next_state,
+         _old,
+         new_tracks,
+         data
+       ) do
     value = Map.get(new_tracks, check.spec.track)
 
     if is_nil(value) or value <= check.spec.max do
@@ -332,7 +372,15 @@ defmodule Accord.Monitor do
     end
   end
 
-  defp check_single(%{kind: :correspondence} = check, _prop_name, message, _next_state, _old, _new, data) do
+  defp check_single(
+         %{kind: :correspondence} = check,
+         _prop_name,
+         message,
+         _next_state,
+         _old,
+         _new,
+         data
+       ) do
     tag = message_tag(message)
     corr = data.correspondence
 
@@ -372,8 +420,7 @@ defmodule Accord.Monitor do
         {:next_state, next_state, data, [{:reply, from, reply}]}
 
       :crash ->
-        {:stop_and_reply, {:protocol_violation, violation},
-         [{:reply, from, reply}]}
+        {:stop_and_reply, {:protocol_violation, violation}, [{:reply, from, reply}]}
 
       {mod, fun} ->
         apply(mod, fun, [violation])

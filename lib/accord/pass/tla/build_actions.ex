@@ -32,14 +32,28 @@ defmodule Accord.Pass.TLA.BuildActions do
           end
 
         Enum.flat_map(transitions, fn transition ->
-          build_actions_for_transition(ir, state_name, transition, state_space, config, all_var_names)
+          build_actions_for_transition(
+            ir,
+            state_name,
+            transition,
+            state_space,
+            config,
+            all_var_names
+          )
         end)
       end)
 
     {:ok, actions}
   end
 
-  defp build_actions_for_transition(ir, state_name, transition, state_space, config, all_var_names) do
+  defp build_actions_for_transition(
+         ir,
+         state_name,
+         transition,
+         state_space,
+         config,
+         all_var_names
+       ) do
     tag = message_tag(transition.message_pattern)
     source = Atom.to_string(state_name)
 
@@ -51,12 +65,32 @@ defmodule Accord.Pass.TLA.BuildActions do
 
       branches ->
         Enum.map(branches, fn branch ->
-          build_call_action(ir, state_name, transition, branch, tag, source, state_space, config, all_var_names)
+          build_call_action(
+            ir,
+            state_name,
+            transition,
+            branch,
+            tag,
+            source,
+            state_space,
+            config,
+            all_var_names
+          )
         end)
     end
   end
 
-  defp build_call_action(_ir, state_name, transition, branch, tag, source, state_space, config, all_var_names) do
+  defp build_call_action(
+         _ir,
+         state_name,
+         transition,
+         branch,
+         tag,
+         source,
+         state_space,
+         config,
+         all_var_names
+       ) do
     target_state = resolve_next_state(branch.next_state, state_name)
     target = Atom.to_string(target_state)
 

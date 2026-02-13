@@ -27,7 +27,8 @@ defmodule Accord.TLA.CompilerTest do
               branches: [%Branch{reply_type: {:tagged, :ok, :pos_integer}, next_state: :locked}],
               guard: %{
                 fun: fn {:acquire, _cid, token}, tracks -> token > tracks.fence_token end,
-                ast: quote(do: fn {:acquire, _cid, token}, tracks -> token > tracks.fence_token end)
+                ast:
+                  quote(do: fn {:acquire, _cid, token}, tracks -> token > tracks.fence_token end)
               },
               update: %{
                 fun: fn {:acquire, cid, token}, _reply, tracks ->
@@ -35,10 +36,9 @@ defmodule Accord.TLA.CompilerTest do
                 end,
                 ast:
                   quote(
-                    do:
-                      fn {:acquire, cid, token}, _reply, tracks ->
-                        %{tracks | holder: cid, fence_token: token}
-                      end
+                    do: fn {:acquire, cid, token}, _reply, tracks ->
+                      %{tracks | holder: cid, fence_token: token}
+                    end
                   )
               }
             }
@@ -58,10 +58,9 @@ defmodule Accord.TLA.CompilerTest do
                 end,
                 ast:
                   quote(
-                    do:
-                      fn {:release, cid, token}, tracks ->
-                        cid == tracks.holder and token == tracks.fence_token
-                      end
+                    do: fn {:release, cid, token}, tracks ->
+                      cid == tracks.holder and token == tracks.fence_token
+                    end
                   )
               },
               update: %{

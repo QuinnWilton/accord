@@ -45,15 +45,20 @@ defmodule Accord.Pass.ValidateProperties do
         |> Report.with_code("E030")
         |> maybe_add_source(ir.source_file)
         |> maybe_add_span_label(check.span, "track :#{track} is not defined")
-        |> Report.with_help(
-          "defined tracks are: #{Enum.map_join(track_names, ", ", &":#{&1}")}"
-        )
+        |> Report.with_help("defined tracks are: #{Enum.map_join(track_names, ", ", &":#{&1}")}")
 
       [report | errors]
     end
   end
 
-  defp validate_check(%IR.Check{kind: :correspondence} = check, ir, _tracks, _states, tags, errors) do
+  defp validate_check(
+         %IR.Check{kind: :correspondence} = check,
+         ir,
+         _tracks,
+         _states,
+         tags,
+         errors
+       ) do
     open_event = check.spec[:open]
 
     if open_event in tags do
@@ -63,7 +68,10 @@ defmodule Accord.Pass.ValidateProperties do
         Report.error("correspondence check references undefined open event :#{open_event}")
         |> Report.with_code("E031")
         |> maybe_add_source(ir.source_file)
-        |> maybe_add_span_label(check.span, "event :#{open_event} does not appear in any transition")
+        |> maybe_add_span_label(
+          check.span,
+          "event :#{open_event} does not appear in any transition"
+        )
         |> Report.with_help(
           "defined message tags are: #{Enum.map_join(Enum.sort(tags), ", ", &":#{&1}")}"
         )
@@ -72,7 +80,14 @@ defmodule Accord.Pass.ValidateProperties do
     end
   end
 
-  defp validate_check(%IR.Check{kind: :local_invariant} = check, ir, _tracks, state_names, _tags, errors) do
+  defp validate_check(
+         %IR.Check{kind: :local_invariant} = check,
+         ir,
+         _tracks,
+         state_names,
+         _tags,
+         errors
+       ) do
     state = check.spec[:state]
 
     if state in state_names do
@@ -83,15 +98,20 @@ defmodule Accord.Pass.ValidateProperties do
         |> Report.with_code("E032")
         |> maybe_add_source(ir.source_file)
         |> maybe_add_span_label(check.span, "state :#{state} is not defined")
-        |> Report.with_help(
-          "defined states are: #{Enum.map_join(state_names, ", ", &":#{&1}")}"
-        )
+        |> Report.with_help("defined states are: #{Enum.map_join(state_names, ", ", &":#{&1}")}")
 
       [report | errors]
     end
   end
 
-  defp validate_check(%IR.Check{kind: :reachable} = check, ir, _tracks, state_names, _tags, errors) do
+  defp validate_check(
+         %IR.Check{kind: :reachable} = check,
+         ir,
+         _tracks,
+         state_names,
+         _tags,
+         errors
+       ) do
     target = check.spec[:target]
 
     if target in state_names do
@@ -102,15 +122,20 @@ defmodule Accord.Pass.ValidateProperties do
         |> Report.with_code("E033")
         |> maybe_add_source(ir.source_file)
         |> maybe_add_span_label(check.span, "state :#{target} is not defined")
-        |> Report.with_help(
-          "defined states are: #{Enum.map_join(state_names, ", ", &":#{&1}")}"
-        )
+        |> Report.with_help("defined states are: #{Enum.map_join(state_names, ", ", &":#{&1}")}")
 
       [report | errors]
     end
   end
 
-  defp validate_check(%IR.Check{kind: :precedence} = check, ir, _tracks, state_names, _tags, errors) do
+  defp validate_check(
+         %IR.Check{kind: :precedence} = check,
+         ir,
+         _tracks,
+         state_names,
+         _tags,
+         errors
+       ) do
     target = check.spec[:target]
     required = check.spec[:required]
 
@@ -130,9 +155,7 @@ defmodule Accord.Pass.ValidateProperties do
         |> Report.with_code("E034")
         |> maybe_add_source(ir.source_file)
         |> maybe_add_span_label(check.span, "#{role} state :#{state} is not defined")
-        |> Report.with_help(
-          "defined states are: #{Enum.map_join(state_names, ", ", &":#{&1}")}"
-        )
+        |> Report.with_help("defined states are: #{Enum.map_join(state_names, ", ", &":#{&1}")}")
 
       [report | errors]
     end

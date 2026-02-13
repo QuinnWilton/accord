@@ -215,7 +215,15 @@ defmodule Accord.TLA.GuardCompilerTest do
     end
 
     test "case expression returns TRUE with warning" do
-      ast = quote(do: case x do 1 -> true; _ -> false end)
+      ast =
+        quote(
+          do:
+            case x do
+              1 -> true
+              _ -> false
+            end
+        )
+
       assert {:partial, "TRUE", [warning]} = GuardCompiler.compile(ast)
       assert warning.message =~ "not compilable to TLA+"
     end

@@ -48,6 +48,7 @@ defmodule Accord.Protocol do
 
   alias Accord.IR
   alias Accord.IR.{Branch, State, Transition}
+  alias Accord.TLA.{ModelConfig, SpanMap}
 
   @doc """
   State predicate for use in liveness properties.
@@ -539,12 +540,36 @@ defmodule Accord.Protocol do
     Module.put_attribute(env.module, :accord_ir_bin, ir_bin)
     Module.put_attribute(env.module, :accord_compiled_bin, compiled_bin)
 
+    # Compile upward → TLA+ spec.
+    opts = Module.get_attribute(env.module, :accord_opts) || []
+    tla_result = compile_tla(ir, opts, env)
+
+    # Build span map defs for __tla_span__/1.
+    span_defs =
+      case tla_result do
+        {:ok, %{span_map: span_map}} ->
+          for {name, span} <- span_map do
+            escaped_span = Macro.escape(span)
+
+            quote do
+              def __tla_span__(unquote(name)), do: unquote(escaped_span)
+            end
+          end
+
+        _ ->
+          []
+      end
+
     monitor_module = Module.concat(env.module, Monitor)
     parent_module = env.module
 
     quote do
       def __ir__, do: :erlang.binary_to_term(@accord_ir_bin)
       def __compiled__, do: :erlang.binary_to_term(@accord_compiled_bin)
+
+      @doc false
+      unquote_splicing(span_defs)
+      def __tla_span__(_), do: nil
 
       defmodule unquote(monitor_module) do
         @moduledoc """
@@ -606,6 +631,60 @@ defmodule Accord.Protocol do
           file: env.file,
           line: env.line
     end
+  end
+
+  # -- TLA+ Compilation --
+
+  defp compile_tla(ir, opts, env) do
+    model_path = Keyword.get(opts, :model)
+    project_root = Mix.Project.build_path() |> Path.join("../../") |> Path.expand()
+
+    config =
+      ModelConfig.load(
+        protocol_config_path: model_path,
+        project_root: project_root
+      )
+
+    case Accord.TLA.Compiler.compile(ir, config) do
+      {:ok, result} ->
+        # Write .tla and .cfg to _build/accord/.
+        write_tla_files(ir.name, result, env)
+
+        # Build span map for __tla_span__/1.
+        span_map = SpanMap.build(ir, result.actions)
+        {:ok, Map.put(result, :span_map, span_map)}
+
+      {:error, reason} ->
+        IO.warn(
+          "TLA+ compilation failed for #{inspect(ir.name)}: #{inspect(reason)}",
+          Macro.Env.stacktrace(env)
+        )
+
+        :error
+    end
+  rescue
+    e ->
+      IO.warn(
+        "TLA+ compilation failed for #{inspect(ir.name)}: #{Exception.message(e)}",
+        Macro.Env.stacktrace(env)
+      )
+
+      :error
+  end
+
+  defp write_tla_files(module_name, result, _env) do
+    # Derive path from module name: Lock.Protocol → lock/protocol.
+    path_parts =
+      module_name
+      |> Module.split()
+      |> Enum.map(&Macro.underscore/1)
+
+    base_dir = Path.join([Mix.Project.build_path(), "accord" | Enum.slice(path_parts, 0..-2//1)])
+    base_name = List.last(path_parts)
+
+    File.mkdir_p!(base_dir)
+    File.write!(Path.join(base_dir, "#{base_name}.tla"), result.tla)
+    File.write!(Path.join(base_dir, "#{base_name}.cfg"), result.cfg)
   end
 
   # -- Message Spec Parsing --

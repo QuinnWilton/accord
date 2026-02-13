@@ -339,7 +339,9 @@ defmodule Accord.MonitorTest do
 
   describe "property checking — invariant" do
     defp invariant_ir do
-      update_fn = fn {:increment, _, amount}, _reply, tracks -> %{tracks | counter: tracks.counter + amount} end
+      update_fn = fn {:increment, _, amount}, _reply, tracks ->
+        %{tracks | counter: tracks.counter + amount}
+      end
 
       %IR{
         name: Test.InvariantProtocol,
@@ -486,7 +488,9 @@ defmodule Accord.MonitorTest do
 
   describe "property checking — bounded" do
     defp bounded_ir do
-      update_fn = fn {:add, amount}, _reply, tracks -> %{tracks | counter: tracks.counter + amount} end
+      update_fn = fn {:add, amount}, _reply, tracks ->
+        %{tracks | counter: tracks.counter + amount}
+      end
 
       %IR{
         name: Test.BoundedProtocol,
