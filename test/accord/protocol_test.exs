@@ -102,6 +102,8 @@ defmodule Accord.ProtocolTest do
 
         update fn _msg, _reply, tracks -> %{tracks | holder: nil} end
       end
+
+      on :expire, reply: :expired, goto: :expired
     end
 
     state :expired, terminal: true
@@ -362,7 +364,7 @@ defmodule Accord.ProtocolTest do
 
     test "release transition has guard" do
       ir = BlockFormProtocol.__ir__()
-      [release] = ir.states[:locked].transitions
+      [release | _] = ir.states[:locked].transitions
 
       assert release.guard != nil
       assert is_function(release.guard.fun, 2)
@@ -387,7 +389,7 @@ defmodule Accord.ProtocolTest do
 
     test "guard function evaluates correctly" do
       ir = BlockFormProtocol.__ir__()
-      [release] = ir.states[:locked].transitions
+      [release | _] = ir.states[:locked].transitions
 
       tracks = %{fence_token: 5, holder: :c1}
       assert release.guard.fun.({:release, :c1, 5}, tracks) == true
