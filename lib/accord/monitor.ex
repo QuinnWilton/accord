@@ -285,7 +285,7 @@ defmodule Accord.Monitor do
     Enum.reduce_while(property.checks, {:ok, data}, fn check, {:ok, acc_data} ->
       case check_single(
              check,
-             property.name,
+             property,
              message,
              next_state,
              old_tracks,
@@ -300,7 +300,7 @@ defmodule Accord.Monitor do
 
   defp check_single(
          %{kind: :invariant} = check,
-         prop_name,
+         property,
          _msg,
          next_state,
          _old,
@@ -310,14 +310,18 @@ defmodule Accord.Monitor do
     if check.spec.fun.(new_tracks) do
       {:ok, data}
     else
-      violation = Violation.invariant_violated(next_state, prop_name, new_tracks)
+      violation = %{
+        Violation.invariant_violated(next_state, property.name, new_tracks)
+        | span: property.span
+      }
+
       {:violation, violation, data}
     end
   end
 
   defp check_single(
          %{kind: :local_invariant} = check,
-         prop_name,
+         property,
          message,
          next_state,
          _old,
@@ -328,7 +332,11 @@ defmodule Accord.Monitor do
       if check.spec.fun.(message, new_tracks) do
         {:ok, data}
       else
-        violation = Violation.invariant_violated(next_state, prop_name, new_tracks)
+        violation = %{
+          Violation.invariant_violated(next_state, property.name, new_tracks)
+          | span: property.span
+        }
+
         {:violation, violation, data}
       end
     else
@@ -338,7 +346,7 @@ defmodule Accord.Monitor do
 
   defp check_single(
          %{kind: :action} = check,
-         prop_name,
+         property,
          _msg,
          next_state,
          old_tracks,
@@ -348,14 +356,18 @@ defmodule Accord.Monitor do
     if check.spec.fun.(old_tracks, new_tracks) do
       {:ok, data}
     else
-      violation = Violation.action_violated(next_state, prop_name, old_tracks, new_tracks)
+      violation = %{
+        Violation.action_violated(next_state, property.name, old_tracks, new_tracks)
+        | span: property.span
+      }
+
       {:violation, violation, data}
     end
   end
 
   defp check_single(
          %{kind: :bounded} = check,
-         prop_name,
+         property,
          _msg,
          next_state,
          _old,
@@ -367,14 +379,18 @@ defmodule Accord.Monitor do
     if is_nil(value) or value <= check.spec.max do
       {:ok, data}
     else
-      violation = Violation.invariant_violated(next_state, prop_name, new_tracks)
+      violation = %{
+        Violation.invariant_violated(next_state, property.name, new_tracks)
+        | span: property.span
+      }
+
       {:violation, violation, data}
     end
   end
 
   defp check_single(
          %{kind: :correspondence} = check,
-         _prop_name,
+         _property,
          message,
          _next_state,
          _old,
@@ -400,7 +416,7 @@ defmodule Accord.Monitor do
   end
 
   # Pass through other check kinds at runtime (design-time only).
-  defp check_single(_check, _prop_name, _msg, _next_state, _old, _new, data) do
+  defp check_single(_check, _property, _msg, _next_state, _old, _new, data) do
     {:ok, data}
   end
 
