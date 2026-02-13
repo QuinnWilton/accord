@@ -133,6 +133,77 @@ defmodule Accord.ProtocolTest do
     state(:dealt, terminal: true)
   end
 
+  defmodule PropertyProtocol do
+    use Accord.Protocol
+
+    initial(:unlocked)
+
+    role(:client)
+    role(:lock_service)
+
+    track(:holder, :term, default: nil)
+    track(:fence_token, :non_neg_integer, default: 0)
+
+    state :unlocked do
+      on {:acquire, _cid :: term(), _token :: pos_integer()} do
+        reply({:ok, pos_integer()})
+        goto(:locked)
+
+        guard(fn {:acquire, _cid, token}, tracks ->
+          token > tracks.fence_token
+        end)
+
+        update(fn {:acquire, cid, token}, _reply, tracks ->
+          %{tracks | holder: cid, fence_token: token}
+        end)
+      end
+
+      on(:stop, reply: :stopped, goto: :stopped)
+    end
+
+    state :locked do
+      on {:release, _cid :: term(), _token :: pos_integer()} do
+        reply(:ok)
+        goto(:unlocked)
+      end
+
+      on(:stop, reply: :stopped, goto: :stopped)
+    end
+
+    state(:stopped, terminal: true)
+
+    anystate do
+      on(:ping, reply: :pong)
+      cast(:heartbeat)
+    end
+
+    property :monotonic_tokens do
+      action(fn old, new -> new.fence_token >= old.fence_token end)
+    end
+
+    property :holder_set do
+      invariant(:locked, fn {:acquire, _, _}, tracks ->
+        tracks.holder != nil
+      end)
+    end
+
+    property :token_non_negative do
+      invariant(fn tracks -> tracks.fence_token >= 0 end)
+    end
+
+    property :no_starvation do
+      liveness(in_state(:locked), leads_to: in_state(:unlocked))
+    end
+
+    property :token_bounded do
+      bounded(:fence_token, max: 1000)
+    end
+
+    property :lock_reachable do
+      reachable(:locked)
+    end
+  end
+
   describe "__ir__/0 — basic structure" do
     test "returns an IR struct with correct module name" do
       ir = SimpleProtocol.__ir__()
@@ -379,6 +450,109 @@ defmodule Accord.ProtocolTest do
       assert Code.ensure_loaded?(SimpleProtocol.Monitor)
       assert function_exported?(SimpleProtocol.Monitor, :start_link, 1)
       assert function_exported?(SimpleProtocol.Monitor, :child_spec, 1)
+    end
+  end
+
+  describe "__ir__/0 — roles" do
+    test "roles are populated" do
+      ir = PropertyProtocol.__ir__()
+      assert length(ir.roles) == 2
+      names = Enum.map(ir.roles, & &1.name)
+      assert :client in names
+      assert :lock_service in names
+    end
+
+    test "roles have spans" do
+      ir = PropertyProtocol.__ir__()
+      [role | _] = ir.roles
+      assert %Pentiment.Span.Position{} = role.span
+    end
+  end
+
+  describe "__ir__/0 — properties" do
+    test "properties are populated" do
+      ir = PropertyProtocol.__ir__()
+      assert length(ir.properties) == 6
+      names = Enum.map(ir.properties, & &1.name)
+      assert :monotonic_tokens in names
+      assert :holder_set in names
+      assert :token_non_negative in names
+      assert :no_starvation in names
+      assert :token_bounded in names
+      assert :lock_reachable in names
+    end
+
+    test "action property has correct check" do
+      ir = PropertyProtocol.__ir__()
+      prop = Enum.find(ir.properties, &(&1.name == :monotonic_tokens))
+      assert [check] = prop.checks
+      assert check.kind == :action
+      assert is_function(check.spec.fun, 2)
+      assert check.spec.ast != nil
+
+      # Verify the function works.
+      assert check.spec.fun.(%{fence_token: 5}, %{fence_token: 10}) == true
+      assert check.spec.fun.(%{fence_token: 10}, %{fence_token: 5}) == false
+    end
+
+    test "local invariant property has correct check" do
+      ir = PropertyProtocol.__ir__()
+      prop = Enum.find(ir.properties, &(&1.name == :holder_set))
+      assert [check] = prop.checks
+      assert check.kind == :local_invariant
+      assert check.spec.state == :locked
+      assert is_function(check.spec.fun, 2)
+    end
+
+    test "global invariant property has correct check" do
+      ir = PropertyProtocol.__ir__()
+      prop = Enum.find(ir.properties, &(&1.name == :token_non_negative))
+      assert [check] = prop.checks
+      assert check.kind == :invariant
+      assert is_function(check.spec.fun, 1)
+
+      assert check.spec.fun.(%{fence_token: 0}) == true
+      assert check.spec.fun.(%{fence_token: -1}) == false
+    end
+
+    test "liveness property has correct check" do
+      ir = PropertyProtocol.__ir__()
+      prop = Enum.find(ir.properties, &(&1.name == :no_starvation))
+      assert [check] = prop.checks
+      assert check.kind == :liveness
+      assert check.spec.trigger == {:in_state, :locked}
+      assert check.spec.target == {:in_state, :unlocked}
+      assert check.spec.fairness == :weak
+    end
+
+    test "bounded property has correct check" do
+      ir = PropertyProtocol.__ir__()
+      prop = Enum.find(ir.properties, &(&1.name == :token_bounded))
+      assert [check] = prop.checks
+      assert check.kind == :bounded
+      assert check.spec.track == :fence_token
+      assert check.spec.max == 1000
+    end
+
+    test "reachable property has correct check" do
+      ir = PropertyProtocol.__ir__()
+      prop = Enum.find(ir.properties, &(&1.name == :lock_reachable))
+      assert [check] = prop.checks
+      assert check.kind == :reachable
+      assert check.spec.target == :locked
+    end
+
+    test "properties have spans" do
+      ir = PropertyProtocol.__ir__()
+      [prop | _] = ir.properties
+      assert %Pentiment.Span.Position{} = prop.span
+    end
+
+    test "checks within properties have spans" do
+      ir = PropertyProtocol.__ir__()
+      prop = Enum.find(ir.properties, &(&1.name == :monotonic_tokens))
+      [check] = prop.checks
+      assert %Pentiment.Span.Position{} = check.span
     end
   end
 

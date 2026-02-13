@@ -49,6 +49,13 @@ defmodule Accord.Protocol do
   alias Accord.IR
   alias Accord.IR.{Branch, State, Transition}
 
+  @doc """
+  State predicate for use in liveness properties.
+
+      liveness in_state(:locked), leads_to: in_state(:unlocked)
+  """
+  def in_state(name), do: {:in_state, name}
+
   defmacro __using__(opts) do
     quote do
       import Accord.Protocol,
@@ -60,7 +67,9 @@ defmodule Accord.Protocol do
           state: 3,
           anystate: 1,
           on: 2,
-          cast: 1
+          cast: 1,
+          property: 2,
+          in_state: 1
         ]
 
       Module.register_attribute(__MODULE__, :accord_initial, [])
@@ -402,6 +411,69 @@ defmodule Accord.Protocol do
         current = Module.get_attribute(__MODULE__, :accord_current_transitions)
         Module.put_attribute(__MODULE__, :accord_current_transitions, [transition | current])
       end
+    end
+  end
+
+  @doc """
+  Defines a named property with one or more checks.
+
+      property :monotonic_tokens do
+        action fn old, new -> new.fence_token >= old.fence_token end
+      end
+
+      property :holder_set do
+        invariant :locked, fn {:acquire, _, _}, tracks ->
+          tracks.holder != nil
+        end
+      end
+
+      property :token_non_negative do
+        invariant fn tracks -> tracks.fence_token >= 0 end
+      end
+
+      property :no_starvation do
+        liveness in_state(:locked), leads_to: in_state(:unlocked)
+      end
+
+  Available check kinds inside property blocks:
+
+  - `invariant fn tracks -> bool end` — global invariant.
+  - `invariant :state, fn msg, tracks -> bool end` — local invariant.
+  - `action fn old_tracks, new_tracks -> bool end` — action property.
+  - `liveness trigger, leads_to: target` — liveness with optional `fairness:`.
+  - `correspondence :open, [:close]` — open/close pairing.
+  - `bounded :track, max: N` — bounded track value.
+  - `ordered :event, by: :field` — event ordering.
+  - `precedence :target, :required` — state precedence.
+  - `reachable :target` — design-time reachability check.
+  - `forbidden fn state, tracks -> bool end` — negated invariant.
+  """
+  defmacro property(name, do: block) do
+    span = span_ast(__CALLER__)
+
+    quote do
+      import Accord.Protocol.Property
+
+      Module.put_attribute(__MODULE__, :accord_property_checks, [])
+
+      unquote(block)
+
+      checks =
+        Module.get_attribute(__MODULE__, :accord_property_checks) |> Enum.reverse()
+
+      Module.put_attribute(
+        __MODULE__,
+        :accord_properties,
+        %Accord.IR.Property{
+          name: unquote(name),
+          checks: checks,
+          span: unquote(span)
+        }
+      )
+
+      Module.delete_attribute(__MODULE__, :accord_property_checks)
+
+      import Accord.Protocol.Property, only: []
     end
   end
 
