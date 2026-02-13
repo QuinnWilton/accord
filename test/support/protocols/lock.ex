@@ -15,9 +15,10 @@ defmodule Accord.Test.Lock.Protocol do
   track :fence_token, :non_neg_integer, default: 0
 
   state :unlocked do
-    on {:acquire, _client_id :: term()} do
-      reply {:ok, pos_integer()},
+    on {:acquire, client_id :: term()} do
+      reply({:ok, pos_integer()},
         where: fn {:ok, token}, tracks -> token > tracks.fence_token end
+      )
 
       goto :locked
 
@@ -30,7 +31,7 @@ defmodule Accord.Test.Lock.Protocol do
   end
 
   state :locked do
-    on {:release, _token :: pos_integer()} do
+    on {:release, token :: pos_integer()} do
       branch :ok, goto: :unlocked
       branch {:error, :invalid_token}, goto: :locked
 
@@ -42,7 +43,7 @@ defmodule Accord.Test.Lock.Protocol do
       end
     end
 
-    on {:acquire, _client_id :: term()} do
+    on {:acquire, client_id :: term()} do
       reply {:error, :already_held}
       goto :locked
     end

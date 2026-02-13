@@ -12,7 +12,7 @@ defmodule Accord do
         use Accord.Protocol
         initial :ready
         state :ready do
-          on {:increment, _n :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
+          on {:increment, n :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
           on :stop, reply: :stopped, goto: :stopped
         end
         state :stopped, terminal: true

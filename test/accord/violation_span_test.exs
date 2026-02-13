@@ -82,7 +82,7 @@ defmodule Accord.ViolationSpanTest do
       assert violation.context.property == :monotonic_tokens
 
       assert %Pentiment.Span.Search{} = violation.span
-      assert violation.span.line == 62
+      assert violation.span.line == 63
       assert violation.span.pattern == ":monotonic_tokens"
       assert_search_span_valid(violation.span, compiled.ir.source_file)
     end
@@ -107,7 +107,7 @@ defmodule Accord.ViolationSpanTest do
       assert violation.context.property == :holder_consistency
 
       assert %Pentiment.Span.Search{} = violation.span
-      assert violation.span.line == 66
+      assert violation.span.line == 67
       assert violation.span.pattern == ":holder_consistency"
       assert_search_span_valid(violation.span, compiled.ir.source_file)
     end
@@ -163,7 +163,7 @@ defmodule Accord.ViolationSpanTest do
       assert transition.span.start_line == 13
 
       # Argument names are still captured.
-      assert transition.message_arg_names == ["_amount"]
+      assert transition.message_arg_names == ["amount"]
 
       # Argument type spans point at the type annotation, not the name.
       assert [%Pentiment.Span.Search{} = arg_span] = transition.message_arg_spans

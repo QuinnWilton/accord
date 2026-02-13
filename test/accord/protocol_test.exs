@@ -25,8 +25,8 @@ defmodule Accord.ProtocolTest do
     initial :ready
 
     state :ready do
-      on {:increment, _amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
-      on {:get, _key :: atom()}, reply: term(), goto: :ready
+      on {:increment, amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
+      on {:get, key :: atom()}, reply: term(), goto: :ready
       on :stop, reply: :stopped, goto: :stopped
     end
 
@@ -81,7 +81,7 @@ defmodule Accord.ProtocolTest do
     track :fence_token, :non_neg_integer, default: 0
 
     state :unlocked do
-      on {:acquire, _client_id :: term()} do
+      on {:acquire, client_id :: term()} do
         reply {:ok, pos_integer()}
         goto :locked
 
@@ -92,7 +92,7 @@ defmodule Accord.ProtocolTest do
     end
 
     state :locked do
-      on {:release, _token :: pos_integer()} do
+      on {:release, token :: pos_integer()} do
         branch :ok, goto: :unlocked
         branch {:error, :invalid_token}, goto: :locked
 
@@ -122,7 +122,7 @@ defmodule Accord.ProtocolTest do
     track :balance, :non_neg_integer, default: 1000
 
     state :waiting do
-      on {:bet, _chips :: pos_integer()} do
+      on {:bet, chips :: pos_integer()} do
         guard fn {:bet, chips}, tracks -> chips <= tracks.balance end
         branch {:ok, term()}, goto: :dealt
         branch {:error, :insufficient_funds}, goto: :waiting
@@ -144,7 +144,7 @@ defmodule Accord.ProtocolTest do
     track :fence_token, :non_neg_integer, default: 0
 
     state :unlocked do
-      on {:acquire, _cid :: term()} do
+      on {:acquire, cid :: term()} do
         reply {:ok, pos_integer()}
         goto :locked
 
@@ -157,7 +157,7 @@ defmodule Accord.ProtocolTest do
     end
 
     state :locked do
-      on {:release, _token :: pos_integer()} do
+      on {:release, token :: pos_integer()} do
         reply :ok
         goto :unlocked
       end

@@ -10,8 +10,8 @@ defmodule Accord.Test.Counter.Protocol do
   initial :ready
 
   state :ready do
-    on {:increment, _amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
-    on {:decrement, _amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
+    on {:increment, amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
+    on {:decrement, amount :: pos_integer()}, reply: {:ok, integer()}, goto: :ready
     on :get, reply: {:value, integer()}, goto: :ready
     on :reset, reply: {:ok, integer()}, goto: :ready
     on :stop, reply: :stopped, goto: :stopped

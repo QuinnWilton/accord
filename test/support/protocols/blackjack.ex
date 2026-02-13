@@ -14,7 +14,7 @@ defmodule Accord.Test.Blackjack.Protocol do
   track :current_bet, :non_neg_integer, default: 0
 
   state :waiting do
-    on {:bet, _chips :: pos_integer()} do
+    on {:bet, chips :: pos_integer()} do
       guard fn {:bet, chips}, tracks -> chips <= tracks.balance end
       update fn {:bet, chips}, _reply, tracks -> %{tracks | current_bet: chips} end
       branch {:ok, non_neg_integer()}, goto: :player_turn
