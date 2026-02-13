@@ -55,6 +55,7 @@ defmodule Accord.Protocol do
 
       liveness in_state(:locked), leads_to: in_state(:unlocked)
   """
+  @spec in_state(atom()) :: {:in_state, atom()}
   def in_state(name), do: {:in_state, name}
 
   defmacro __using__(opts) do
@@ -291,12 +292,14 @@ defmodule Accord.Protocol do
           next = if in_anystate, do: :__same__, else: goto_state
 
           if reply_type do
-            [%Branch{
-              reply_type: reply_type,
-              next_state: next || :__same__,
-              constraint: reply_constraint,
-              span: reply_span || unquote(span)
-            }]
+            [
+              %Branch{
+                reply_type: reply_type,
+                next_state: next || :__same__,
+                constraint: reply_constraint,
+                span: reply_span || unquote(span)
+              }
+            ]
           else
             []
           end
@@ -415,6 +418,7 @@ defmodule Accord.Protocol do
   defmacro cast(message_spec) do
     {message_pattern, message_types, _message_arg_names, _message_arg_spans} =
       parse_message_spec(message_spec)
+
     escaped_types = Macro.escape(message_types)
     span = span_ast(__CALLER__)
 
@@ -504,6 +508,54 @@ defmodule Accord.Protocol do
   # -- @before_compile --
 
   defmacro __before_compile__(env) do
+    {ir, fn_specs, tla_result} = compile_protocol(env)
+
+    ir_bin = :erlang.term_to_binary(ir)
+    compiled_bin = :erlang.term_to_binary(build_compiled(ir))
+    Module.put_attribute(env.module, :accord_ir_bin, ir_bin)
+    Module.put_attribute(env.module, :accord_compiled_bin, compiled_bin)
+
+    fn_defs = fn_to_defs(fn_specs)
+    span_defs = build_span_defs(tla_result)
+    monitor_module = Module.concat(env.module, Monitor)
+    parent_module = env.module
+
+    quote do
+      unquote_splicing(fn_defs)
+
+      # :safe mode cannot be used here because the IR contains lifted
+      # function references (EXPORT_EXT) that require atom creation.
+      # These binaries are generated at compile time, never from untrusted sources.
+      def __ir__, do: :erlang.binary_to_term(@accord_ir_bin)
+      def __compiled__, do: :erlang.binary_to_term(@accord_compiled_bin)
+
+      @doc false
+      unquote_splicing(span_defs)
+      def __tla_span__(_), do: nil
+
+      defmodule unquote(monitor_module) do
+        @moduledoc """
+        Runtime monitor for `#{inspect(unquote(parent_module))}`.
+
+        Thin wrapper around `Accord.Monitor` with compiled protocol data baked in.
+        """
+
+        def start_link(opts) do
+          compiled = unquote(parent_module).__compiled__()
+          Accord.Monitor.start_link(compiled, opts)
+        end
+
+        def child_spec(opts) do
+          %{
+            id: __MODULE__,
+            start: {__MODULE__, :start_link, [opts]}
+          }
+        end
+      end
+    end
+  end
+
+  defp compile_protocol(env) do
     initial = Module.get_attribute(env.module, :accord_initial)
     states_raw = Module.get_attribute(env.module, :accord_states) |> Enum.reverse()
     anystate_raw = Module.get_attribute(env.module, :accord_anystate) |> Enum.reverse()
@@ -553,75 +605,37 @@ defmodule Accord.Protocol do
     # won't exist when the .beam is loaded in a later VM session).
     {ir, fn_specs} = lift_closures(ir, env.module)
 
-    # Build runtime artifacts.
-    {:ok, table} = Accord.Pass.BuildTransitionTable.run(ir)
-    {:ok, track_init} = Accord.Pass.BuildTrackInit.run(ir)
-
-    compiled = %Accord.Monitor.Compiled{
-      ir: ir,
-      transition_table: table,
-      track_init: track_init
-    }
-
-    ir_bin = :erlang.term_to_binary(ir)
-    compiled_bin = :erlang.term_to_binary(compiled)
-    Module.put_attribute(env.module, :accord_ir_bin, ir_bin)
-    Module.put_attribute(env.module, :accord_compiled_bin, compiled_bin)
-
     # Compile upward → TLA+ spec.
     opts = Module.get_attribute(env.module, :accord_opts) || []
     tla_result = compile_tla(ir, opts, env)
 
-    # Build span map defs for __tla_span__/1.
-    span_defs =
-      case tla_result do
-        {:ok, %{span_map: span_map}} ->
-          for {name, span} <- span_map do
-            escaped_span = Macro.escape(span)
+    {ir, fn_specs, tla_result}
+  end
 
-            quote do
-              def __tla_span__(unquote(name)), do: unquote(escaped_span)
-            end
+  defp build_compiled(ir) do
+    {:ok, table} = Accord.Pass.BuildTransitionTable.run(ir)
+    {:ok, track_init} = Accord.Pass.BuildTrackInit.run(ir)
+
+    %Accord.Monitor.Compiled{
+      ir: ir,
+      transition_table: table,
+      track_init: track_init
+    }
+  end
+
+  defp build_span_defs(tla_result) do
+    case tla_result do
+      {:ok, %{span_map: span_map}} ->
+        for {name, span} <- span_map do
+          escaped_span = Macro.escape(span)
+
+          quote do
+            def __tla_span__(unquote(name)), do: unquote(escaped_span)
           end
-
-        _ ->
-          []
-      end
-
-    fn_defs = fn_to_defs(fn_specs)
-
-    monitor_module = Module.concat(env.module, Monitor)
-    parent_module = env.module
-
-    quote do
-      unquote_splicing(fn_defs)
-
-      def __ir__, do: :erlang.binary_to_term(@accord_ir_bin)
-      def __compiled__, do: :erlang.binary_to_term(@accord_compiled_bin)
-
-      @doc false
-      unquote_splicing(span_defs)
-      def __tla_span__(_), do: nil
-
-      defmodule unquote(monitor_module) do
-        @moduledoc """
-        Runtime monitor for `#{inspect(unquote(parent_module))}`.
-
-        Thin wrapper around `Accord.Monitor` with compiled protocol data baked in.
-        """
-
-        def start_link(opts) do
-          compiled = unquote(parent_module).__compiled__()
-          Accord.Monitor.start_link(compiled, opts)
         end
 
-        def child_spec(opts) do
-          %{
-            id: __MODULE__,
-            start: {__MODULE__, :start_link, [opts]}
-          }
-        end
-      end
+      _ ->
+        []
     end
   end
 
@@ -645,18 +659,16 @@ defmodule Accord.Protocol do
         {:ok, ir}
 
       {:error, reports} ->
+        source =
+          if ir.source_file && File.exists?(ir.source_file) do
+            Pentiment.Source.from_file(ir.source_file)
+          else
+            nil
+          end
+
         message =
           reports
-          |> Enum.map(fn report ->
-            source =
-              if ir.source_file && File.exists?(ir.source_file) do
-                Pentiment.Source.from_file(ir.source_file)
-              else
-                nil
-              end
-
-            Pentiment.format(report, source)
-          end)
+          |> Enum.map(fn report -> Pentiment.format(report, source) end)
           |> Enum.join("\n\n")
 
         raise CompileError,
