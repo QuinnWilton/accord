@@ -57,11 +57,13 @@ defmodule Accord.Pass.ValidateStructure do
         if target == :__same__ or target in state_names do
           inner_acc
         else
+          span = branch.next_state_span || transition.span
+
           report =
             Report.error("undefined state reference :#{target}")
             |> Report.with_code("E002")
             |> maybe_add_source(ir.source_file)
-            |> maybe_add_span_label(transition.span, "goto target :#{target} is not defined")
+            |> maybe_add_span_label(span, "goto target :#{target} is not defined")
             |> Report.with_help(
               "defined states are: #{Enum.map_join(state_names, ", ", &":#{&1}")}"
             )

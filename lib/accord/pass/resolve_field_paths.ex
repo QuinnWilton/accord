@@ -35,11 +35,11 @@ defmodule Accord.Pass.ResolveFieldPaths do
   end
 
   # Ordered: resolve the single `by:` path against the event's transition.
-  defp resolve_check(%IR.Check{kind: :ordered} = check, property, transitions, ir, errors) do
+  defp resolve_check(%IR.Check{kind: :ordered} = check, _property, transitions, ir, errors) do
     path = normalize_path(check.spec.by)
     event = check.spec.event
 
-    case resolve_path(path, event, transitions, property, ir) do
+    case resolve_path(path, event, transitions, check, ir) do
       {:ok, extract} ->
         spec = Map.put(check.spec, :extract, extract)
         {%{check | spec: spec}, errors}
@@ -50,13 +50,13 @@ defmodule Accord.Pass.ResolveFieldPaths do
   end
 
   # Correspondence with `by:`: resolve path in open event and each close event.
-  defp resolve_check(%IR.Check{kind: :correspondence} = check, property, transitions, ir, errors)
+  defp resolve_check(%IR.Check{kind: :correspondence} = check, _property, transitions, ir, errors)
        when check.spec.by != nil do
     path = normalize_path(check.spec.by)
 
-    with {:ok, open_extract} <- resolve_path(path, check.spec.open, transitions, property, ir),
+    with {:ok, open_extract} <- resolve_path(path, check.spec.open, transitions, check, ir),
          {:ok, close_extracts} <-
-           resolve_close_paths(path, check.spec.close, transitions, property, ir) do
+           resolve_close_paths(path, check.spec.close, transitions, check, ir) do
       spec =
         check.spec
         |> Map.put(:open_extract, open_extract)
@@ -74,26 +74,28 @@ defmodule Accord.Pass.ResolveFieldPaths do
     {check, errors}
   end
 
-  defp resolve_close_paths(path, close_events, transitions, property, ir) do
+  defp resolve_close_paths(path, close_events, transitions, check, ir) do
     Enum.reduce_while(close_events, {:ok, %{}}, fn event, {:ok, acc} ->
-      case resolve_path(path, event, transitions, property, ir) do
+      case resolve_path(path, event, transitions, check, ir) do
         {:ok, extract} -> {:cont, {:ok, Map.put(acc, event, extract)}}
         {:error, _} = err -> {:halt, err}
       end
     end)
   end
 
-  defp resolve_path(path, event, transitions, property, ir) do
+  defp resolve_path(path, event, transitions, check, ir) do
     [param_name | nested_keys] = path
 
     case Map.get(transitions, event) do
       nil ->
+        span = derive_arg_span(check.span, ":#{event}")
+
         report =
           Report.error("field path references unknown event :#{event}")
           |> Report.with_code("E035")
           |> maybe_add_source(ir.source_file)
           |> maybe_add_span_label(
-            property.span,
+            span,
             "event :#{event} does not appear in any transition"
           )
 
@@ -107,12 +109,14 @@ defmodule Accord.Pass.ResolveFieldPaths do
 
         case find_arg_position(arg_names, to_string(param_name)) do
           nil ->
+            span = derive_arg_span(check.span, ":#{param_name}")
+
             report =
               Report.error("field :#{param_name} not found in :#{event} message parameters")
               |> Report.with_code("E036")
               |> maybe_add_source(ir.source_file)
               |> maybe_add_span_label(
-                property.span,
+                span,
                 ":#{param_name} is not a parameter of :#{event}"
               )
               |> Report.with_help(

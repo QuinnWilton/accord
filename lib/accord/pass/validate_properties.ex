@@ -42,11 +42,13 @@ defmodule Accord.Pass.ValidateProperties do
     if track in track_names do
       errors
     else
+      span = derive_arg_span(check.span, ":#{track}")
+
       report =
         Report.error("bounded check references undefined track :#{track}")
         |> Report.with_code("E030")
         |> maybe_add_source(ir.source_file)
-        |> maybe_add_span_label(check.span, "track :#{track} is not defined")
+        |> maybe_add_span_label(span, "track :#{track} is not defined")
         |> Report.with_help("defined tracks are: #{Enum.map_join(track_names, ", ", &":#{&1}")}")
 
       [report | errors]
@@ -66,12 +68,14 @@ defmodule Accord.Pass.ValidateProperties do
     if open_event in tags do
       errors
     else
+      span = derive_arg_span(check.span, ":#{open_event}")
+
       report =
         Report.error("correspondence check references undefined open event :#{open_event}")
         |> Report.with_code("E031")
         |> maybe_add_source(ir.source_file)
         |> maybe_add_span_label(
-          check.span,
+          span,
           "event :#{open_event} does not appear in any transition"
         )
         |> Report.with_help(
@@ -95,11 +99,13 @@ defmodule Accord.Pass.ValidateProperties do
     if state in state_names do
       errors
     else
+      span = derive_arg_span(check.span, ":#{state}")
+
       report =
         Report.error("local_invariant check references undefined state :#{state}")
         |> Report.with_code("E032")
         |> maybe_add_source(ir.source_file)
-        |> maybe_add_span_label(check.span, "state :#{state} is not defined")
+        |> maybe_add_span_label(span, "state :#{state} is not defined")
         |> Report.with_help("defined states are: #{Enum.map_join(state_names, ", ", &":#{&1}")}")
 
       [report | errors]
@@ -119,11 +125,13 @@ defmodule Accord.Pass.ValidateProperties do
     if target in state_names do
       errors
     else
+      span = derive_arg_span(check.span, ":#{target}")
+
       report =
         Report.error("reachable check references undefined state :#{target}")
         |> Report.with_code("E033")
         |> maybe_add_source(ir.source_file)
-        |> maybe_add_span_label(check.span, "state :#{target} is not defined")
+        |> maybe_add_span_label(span, "state :#{target} is not defined")
         |> Report.with_help("defined states are: #{Enum.map_join(state_names, ", ", &":#{&1}")}")
 
       [report | errors]
@@ -152,11 +160,13 @@ defmodule Accord.Pass.ValidateProperties do
     if state in state_names do
       errors
     else
+      span = derive_arg_span(check.span, ":#{state}")
+
       report =
         Report.error("precedence check references undefined #{role} state :#{state}")
         |> Report.with_code("E034")
         |> maybe_add_source(ir.source_file)
-        |> maybe_add_span_label(check.span, "#{role} state :#{state} is not defined")
+        |> maybe_add_span_label(span, "#{role} state :#{state} is not defined")
         |> Report.with_help("defined states are: #{Enum.map_join(state_names, ", ", &":#{&1}")}")
 
       [report | errors]

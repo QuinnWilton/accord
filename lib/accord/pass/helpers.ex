@@ -29,4 +29,20 @@ defmodule Accord.Pass.Helpers do
   @spec message_tag(%{message_pattern: atom() | tuple()}) :: atom()
   def message_tag(%{message_pattern: pattern}) when is_atom(pattern), do: pattern
   def message_tag(%{message_pattern: pattern}) when is_tuple(pattern), do: elem(pattern, 0)
+
+  @doc """
+  Derives a more specific span from a base span by changing the search pattern.
+
+  When the base span is a `Search` span, returns a new `Search` on the same
+  line with the given pattern. For other span types (Position) or nil, returns
+  the base unchanged.
+  """
+  @spec derive_arg_span(Pentiment.Span.t() | nil, String.t()) :: Pentiment.Span.t() | nil
+  def derive_arg_span(nil, _pattern), do: nil
+
+  def derive_arg_span(%Pentiment.Span.Search{} = base, pattern) do
+    %Pentiment.Span.Search{line: base.line, pattern: pattern}
+  end
+
+  def derive_arg_span(base, _pattern), do: base
 end
