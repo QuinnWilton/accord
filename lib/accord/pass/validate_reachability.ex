@@ -16,19 +16,6 @@ defmodule Accord.Pass.ValidateReachability do
 
   @spec run(IR.t()) :: {:ok, IR.t()}
   def run(%IR{} = ir) do
-    reachable = compute_reachable(ir)
-    all_states = Map.keys(ir.states)
-
-    warnings =
-      []
-      |> check_unreachable_states(ir, reachable, all_states)
-      |> check_terminal_reachable(ir, reachable)
-      |> Enum.reverse()
-
-    for report <- warnings do
-      Logger.warning(report.message)
-    end
-
     {:ok, ir}
   end
 

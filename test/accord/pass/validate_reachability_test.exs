@@ -1,6 +1,8 @@
 defmodule Accord.Pass.ValidateReachabilityTest do
   use ExUnit.Case, async: true
 
+  @moduletag :capture_log
+
   alias Accord.IR
   alias Accord.IR.{Branch, State, Transition}
   alias Accord.Pass.ValidateReachability

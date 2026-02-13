@@ -516,6 +516,11 @@ defmodule Accord.Protocol do
         {:error, _} -> ir
       end
 
+    # Emit reachability warnings through the compiler.
+    for report <- Accord.Pass.ValidateReachability.warnings(ir) do
+      IO.warn(report.message, Macro.Env.stacktrace(env))
+    end
+
     # Lift anonymous closures into named module functions so they
     # serialize as EXPORT_EXT (MFA references) rather than NEW_FUN_EXT
     # (which encodes references to the temporary compiler module that
