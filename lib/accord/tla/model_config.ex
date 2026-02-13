@@ -38,12 +38,14 @@ defmodule Accord.TLA.ModelConfig do
 
   @type t :: %__MODULE__{
           domains: %{atom() => domain()},
+          init: %{atom() => term()},
           symmetry_sets: [atom()],
           max_list_length: pos_integer(),
           state_constraint: String.t() | nil
         }
 
   defstruct domains: %{},
+            init: %{},
             symmetry_sets: [],
             max_list_length: nil,
             state_constraint: nil
@@ -108,6 +110,14 @@ defmodule Accord.TLA.ModelConfig do
   end
 
   @doc """
+  Resolves the init value for a track, preferring model config overrides.
+  """
+  @spec resolve_init(t(), atom(), term()) :: term()
+  def resolve_init(%__MODULE__{} = config, track_name, protocol_default) do
+    Map.get(config.init, track_name, protocol_default)
+  end
+
+  @doc """
   Converts a domain to a TLA+ set expression string.
   """
   @spec domain_to_tla(domain()) :: String.t()
@@ -160,6 +170,7 @@ defmodule Accord.TLA.ModelConfig do
   defp parse_config(config) when is_list(config) do
     %__MODULE__{
       domains: Keyword.get(config, :domains, %{}),
+      init: Keyword.get(config, :init, %{}),
       symmetry_sets: Keyword.get(config, :symmetry_sets, []),
       max_list_length: Keyword.get(config, :max_list_length, 3),
       state_constraint: Keyword.get(config, :state_constraint)
@@ -171,6 +182,7 @@ defmodule Accord.TLA.ModelConfig do
   defp merge(protocol, project) do
     %__MODULE__{
       domains: Map.merge(project.domains, protocol.domains),
+      init: Map.merge(project.init, protocol.init),
       symmetry_sets: Enum.uniq(project.symmetry_sets ++ protocol.symmetry_sets),
       max_list_length: protocol.max_list_length || project.max_list_length || 3,
       state_constraint: protocol.state_constraint || project.state_constraint

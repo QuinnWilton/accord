@@ -139,6 +139,74 @@ defmodule Accord.TLA.ModelConfigTest do
     end
   end
 
+  describe "resolve_init/3" do
+    test "returns override when present" do
+      config = %ModelConfig{init: %{balance: 3}}
+
+      assert ModelConfig.resolve_init(config, :balance, 1000) == 3
+    end
+
+    test "falls back to protocol default when no override" do
+      config = %ModelConfig{init: %{}}
+
+      assert ModelConfig.resolve_init(config, :balance, 1000) == 1000
+    end
+  end
+
+  describe "init field" do
+    @tag :tmp_dir
+    test "parsed from config file", %{tmp_dir: tmp_dir} do
+      config_path = Path.join(tmp_dir, "model.exs")
+
+      File.write!(config_path, """
+      [
+        domains: %{balance: 0..6},
+        init: %{balance: 3}
+      ]
+      """)
+
+      config = ModelConfig.load(protocol_config_path: config_path)
+
+      assert config.init == %{balance: 3}
+    end
+
+    @tag :tmp_dir
+    test "protocol init overrides project init", %{tmp_dir: tmp_dir} do
+      project_path = Path.join(tmp_dir, ".accord_model.exs")
+
+      File.write!(project_path, """
+      [
+        init: %{balance: 5, counter: 0}
+      ]
+      """)
+
+      protocol_path = Path.join(tmp_dir, "model.exs")
+
+      File.write!(protocol_path, """
+      [
+        init: %{balance: 3}
+      ]
+      """)
+
+      config =
+        ModelConfig.load(
+          project_root: tmp_dir,
+          protocol_config_path: protocol_path
+        )
+
+      # Protocol overrides project for balance.
+      assert config.init[:balance] == 3
+      # Project value preserved for counter.
+      assert config.init[:counter] == 0
+    end
+
+    test "defaults to empty map" do
+      config = %ModelConfig{}
+
+      assert config.init == %{}
+    end
+  end
+
   describe "domain_to_tla/1" do
     test "range" do
       assert ModelConfig.domain_to_tla(1..5) == "1..5"
