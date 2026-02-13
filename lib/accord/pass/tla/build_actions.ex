@@ -107,10 +107,8 @@ defmodule Accord.Pass.TLA.BuildActions do
     guard_precondition =
       case transition.guard do
         %{ast: ast} when not is_nil(ast) ->
-          case GuardCompiler.compile(ast, param_bindings) do
-            {:ok, tla} -> [tla]
-            {:partial, tla, _warnings} -> [tla]
-          end
+          {:ok, tla} = GuardCompiler.compile(ast, param_bindings)
+          [tla]
 
         _ ->
           []
@@ -125,7 +123,7 @@ defmodule Accord.Pass.TLA.BuildActions do
 
     # Constraint precondition from where clause.
     {constraint_existentials, constraint_precondition} =
-      build_constraint(branch, reply_existentials, config)
+      build_constraint(branch, reply_existentials, update_bindings, config)
 
     existential_vars = existential_vars ++ reply_existentials ++ constraint_existentials
 
@@ -205,17 +203,28 @@ defmodule Accord.Pass.TLA.BuildActions do
     }
   end
 
-  defp build_existentials(%Transition{message_pattern: pattern, message_types: types}, config) do
+  defp build_existentials(
+         %Transition{message_pattern: pattern, message_types: types, message_arg_names: arg_names},
+         config
+       ) do
     case pattern do
       pat when is_tuple(pat) ->
         args = pat |> Tuple.to_list() |> tl()
+        arg_names = arg_names || []
 
         {vars, bindings} =
           args
           |> Enum.zip(types)
           |> Enum.with_index()
           |> Enum.reduce({[], %{}}, fn {{arg, type}, idx}, {vars_acc, bindings_acc} ->
-            param_name = extract_param_name(arg, idx)
+            # Prefer the declared argument name (from `count :: pos_integer()`) over
+            # the pattern position. Guards reference the declared name, not :arg0.
+            param_name =
+              case Enum.at(arg_names, idx) do
+                name when is_binary(name) -> String.to_atom(name)
+                _ -> extract_param_name(arg, idx)
+              end
+
             tla_var = "msg_#{param_name}"
             domain = ModelConfig.resolve_domain(config, param_name, type)
             domain_tla = ModelConfig.domain_to_tla(domain)
@@ -244,11 +253,7 @@ defmodule Accord.Pass.TLA.BuildActions do
     Map.new(update_pairs, fn {key, val_ast} ->
       key_str = Atom.to_string(key)
 
-      tla_val =
-        case GuardCompiler.compile(val_ast, bindings) do
-          {:ok, expr} -> expr
-          {:partial, expr, _} -> expr
-        end
+      {:ok, tla_val} = GuardCompiler.compile(val_ast, bindings)
 
       {key_str, tla_val}
     end)
@@ -347,20 +352,20 @@ defmodule Accord.Pass.TLA.BuildActions do
   defp build_update_bindings(%Transition{update: %{ast: ast}}, branch, existentials, config)
        when not is_nil(ast) do
     case ast do
-      {:fn, _, [{:->, _, [[msg_pat, reply_pat, _tracks_var], _body]}]} ->
+      {:fn, _, [{:->, _, [[msg_pat, reply_pat, _tracks_var], body]}]} ->
         # Map update fn's message params to existing existential vars by position.
         msg_params = extract_pattern_params(msg_pat)
         msg_bindings = zip_to_existentials(msg_params, existentials)
 
-        # Only create reply existentials when the pattern destructures the reply
-        # (tagged tuple pattern), not when it's a bare variable.
+        # Create reply existentials either from destructured pattern or from
+        # case-arm patterns when the reply is a bare variable with case dispatch.
         {reply_existentials, reply_bindings} =
           if destructured_pattern?(reply_pat) do
             reply_params = extract_pattern_params(reply_pat)
             reply_types = extract_reply_inner_types(branch.reply_type)
             build_reply_existentials(reply_params, reply_types, config)
           else
-            {[], %{}}
+            extract_case_reply_bindings(reply_pat, body, branch, config)
           end
 
         {reply_existentials, Map.merge(msg_bindings, reply_bindings)}
@@ -372,14 +377,72 @@ defmodule Accord.Pass.TLA.BuildActions do
 
   defp build_update_bindings(_, _, _, _), do: {[], %{}}
 
+  # When the update fn binds the reply to a bare variable and dispatches via
+  # a case expression, extract reply param bindings from the matching arm's
+  # pattern. This handles patterns like:
+  #
+  #     fn _msg, reply, tracks ->
+  #       case reply do
+  #         {:ok, items} -> %{tracks | buffer_size: tracks.buffer_size - length(items)}
+  #         {:done, items} -> %{tracks | buffer_size: tracks.buffer_size - length(items)}
+  #       end
+  #     end
+  #
+  defp extract_case_reply_bindings(reply_pat, body, branch, config) do
+    reply_var_name = extract_var_name(reply_pat)
+
+    case find_case_on_var(body, reply_var_name) do
+      {:ok, clauses} ->
+        matching_clause =
+          Enum.find(clauses, fn {:->, _, [[pattern], _body]} ->
+            case_pattern_matches_reply_type?(pattern, branch.reply_type)
+          end)
+
+        case matching_clause do
+          {:->, _, [[pattern], _body]} ->
+            reply_params = extract_pattern_params(pattern)
+            reply_types = extract_reply_inner_types(branch.reply_type)
+            build_reply_existentials(reply_params, reply_types, config)
+
+          nil ->
+            {[], %{}}
+        end
+
+      :not_found ->
+        {[], %{}}
+    end
+  end
+
+  defp extract_var_name({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: name
+  defp extract_var_name(_), do: nil
+
+  # Walks the AST to find a case expression whose subject is the given variable.
+  defp find_case_on_var({:case, _, [{var_name, _, ctx}, [do: clauses]]}, var_name)
+       when is_atom(ctx) do
+    {:ok, clauses}
+  end
+
+  defp find_case_on_var({:__block__, _, exprs}, var_name) do
+    Enum.find_value(exprs, :not_found, fn expr ->
+      case find_case_on_var(expr, var_name) do
+        {:ok, _} = found -> found
+        :not_found -> nil
+      end
+    end) || :not_found
+  end
+
+  defp find_case_on_var(_, _), do: :not_found
+
   # Compiles a branch constraint (where clause) into a TLA+ precondition.
   # Maps the constraint fn's reply params to existing reply existential vars,
   # or creates new ones if the branch has no update fn.
-  defp build_constraint(%{constraint: nil}, _reply_existentials, _config), do: {[], []}
+  defp build_constraint(%{constraint: nil}, _reply_existentials, _update_bindings, _config),
+    do: {[], []}
 
   defp build_constraint(
          %{constraint: %{ast: ast}, reply_type: reply_type},
          reply_existentials,
+         update_bindings,
          config
        ) do
     case ast do
@@ -388,22 +451,39 @@ defmodule Accord.Pass.TLA.BuildActions do
 
         {extra_existentials, bindings} =
           if reply_existentials != [] do
-            # Map constraint params to existing reply existentials by position.
-            {[], zip_to_existentials(reply_params, reply_existentials)}
+            # Map constraint params to existing reply existentials by position,
+            # then merge update_bindings to preserve list-length tags.
+            base = zip_to_existentials(reply_params, reply_existentials)
+            {[], enrich_bindings(base, update_bindings)}
           else
             # No update fn created reply existentials — create from constraint.
             reply_types = extract_reply_inner_types(reply_type)
             build_reply_existentials(reply_params, reply_types, config)
           end
 
-        case GuardCompiler.compile(body, bindings) do
-          {:ok, tla} -> {extra_existentials, [tla]}
-          {:partial, tla, _} -> {extra_existentials, [tla]}
-        end
+        {:ok, tla} = GuardCompiler.compile(body, bindings)
+        {extra_existentials, [tla]}
 
       _ ->
         {[], []}
     end
+  end
+
+  # Enriches base bindings with tagged forms (e.g. {:list_length, var}) from
+  # the update bindings. When a constraint param maps to the same TLA+ var as
+  # an update param, the richer binding form is used so that length() calls
+  # compile correctly.
+  defp enrich_bindings(base, update_bindings) do
+    # Build reverse lookup: tla_var string → full binding form.
+    reverse =
+      Map.new(update_bindings, fn
+        {_name, {:list_length, tla_var} = binding} -> {tla_var, binding}
+        {_name, tla_var} -> {tla_var, tla_var}
+      end)
+
+    Map.new(base, fn {name, tla_var} ->
+      {name, Map.get(reverse, tla_var, tla_var)}
+    end)
   end
 
   # Returns true if the pattern destructures into components (tagged tuple),
@@ -445,15 +525,31 @@ defmodule Accord.Pass.TLA.BuildActions do
   defp extract_reply_inner_types(_), do: []
 
   # Creates existential vars for reply parameters.
+  # When a reply parameter has list type, abstracts it to its length
+  # (a non_neg_integer) since TLC can't enumerate variable-length sequences.
+  # The binding marks the variable as a list-length abstraction so that
+  # `length(name)` in guards/updates compiles to just the variable.
   defp build_reply_existentials(params, types, config) do
     {vars_rev, bindings} =
       params
       |> Enum.zip(types)
       |> Enum.reduce({[], %{}}, fn {name, type}, {vars_acc, bindings_acc} ->
-        tla_var = "reply_#{name}"
-        domain = ModelConfig.resolve_domain(config, name, type)
-        domain_tla = ModelConfig.domain_to_tla(domain)
-        {[{tla_var, domain_tla} | vars_acc], Map.put(bindings_acc, name, tla_var)}
+        case type do
+          {:list, _elem_type} ->
+            # Abstract list to its length.
+            tla_var = "reply_#{name}_len"
+            max_len = config.max_list_length || 3
+            domain_tla = "0..#{max_len}"
+
+            {[{tla_var, domain_tla} | vars_acc],
+             Map.put(bindings_acc, name, {:list_length, tla_var})}
+
+          _ ->
+            tla_var = "reply_#{name}"
+            domain = ModelConfig.resolve_domain(config, name, type)
+            domain_tla = ModelConfig.domain_to_tla(domain)
+            {[{tla_var, domain_tla} | vars_acc], Map.put(bindings_acc, name, tla_var)}
+        end
       end)
 
     {Enum.reverse(vars_rev), bindings}
