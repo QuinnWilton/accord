@@ -65,6 +65,7 @@ defmodule Accord.Protocol.Property do
   defmacro liveness(trigger, opts) do
     target = Keyword.fetch!(opts, :leads_to)
     fairness = Keyword.get(opts, :fairness, :weak)
+    timeout = Keyword.get(opts, :timeout, :infinity)
     span = span_ast(__CALLER__)
 
     quote do
@@ -75,7 +76,8 @@ defmodule Accord.Protocol.Property do
         spec: %{
           trigger: unquote(trigger),
           target: unquote(target),
-          fairness: unquote(fairness)
+          fairness: unquote(fairness),
+          timeout: unquote(timeout)
         },
         span: unquote(span)
       }
@@ -85,7 +87,8 @@ defmodule Accord.Protocol.Property do
   end
 
   @doc false
-  defmacro correspondence(open, close) do
+  defmacro correspondence(open, close, opts \\ []) do
+    by = Keyword.get(opts, :by)
     span = span_ast(__CALLER__)
 
     quote do
@@ -93,7 +96,7 @@ defmodule Accord.Protocol.Property do
 
       check = %Check{
         kind: :correspondence,
-        spec: %{open: unquote(open), close: unquote(close)},
+        spec: %{open: unquote(open), close: unquote(close), by: unquote(by)},
         span: unquote(span)
       }
 
