@@ -42,15 +42,11 @@ defmodule Mix.Tasks.Accord.Tla do
   end
 
   defp tla_paths(mod) do
-    path_parts =
-      mod
-      |> Module.split()
-      |> Enum.map(&Macro.underscore/1)
+    parts = Module.split(mod)
+    dir_parts = parts |> Enum.slice(0..-2//1) |> Enum.map(&Macro.underscore/1)
 
-    base_dir =
-      Path.join([Mix.Project.build_path(), "accord" | Enum.slice(path_parts, 0..-2//1)])
-
-    base_name = List.last(path_parts)
+    base_dir = Path.join([Mix.Project.build_path(), "accord" | dir_parts])
+    base_name = List.last(parts)
 
     {
       Path.join(base_dir, "#{base_name}.tla"),

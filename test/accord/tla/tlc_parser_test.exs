@@ -104,6 +104,60 @@ defmodule Accord.TLA.TLCParserTest do
     end
   end
 
+  # -- Action property violation --
+
+  @action_property_violation """
+  TLC2 Version 2.18 of 22 July 2022
+  Running breadth-first search Model-Checking with fp 93 and seed 1234
+
+  Computing initial states...
+  Finished computing initial states: 1 distinct state generated.
+
+  Error: Action property MonotonicTokens is violated.
+
+  Error: The behavior up to this point is:
+
+  State 1: <Initial predicate>
+  /\\ state = "unlocked"
+  /\\ fence_token = 0
+  /\\ holder = NULL
+
+  State 2: <AcquireFromUnlockedToLocked line 20, col 1 to line 30, col 40 of module Protocol>
+  /\\ state = "locked"
+  /\\ fence_token = 3
+  /\\ holder = c1
+
+  State 3: <ReleaseFromLockedToUnlocked line 32, col 1 to line 42, col 40 of module Protocol>
+  /\\ state = "unlocked"
+  /\\ fence_token = 1
+  /\\ holder = NULL
+
+  55 states generated, 55 distinct states found, 0 states left on queue.
+  The depth of the complete state graph search is 5.
+  Finished in 01s at (2023-03-09 15:53:06)
+  """
+
+  describe "action property violation" do
+    test "detects action property violation" do
+      assert {:error, violation, _stats} = TLCParser.parse(@action_property_violation)
+      assert violation.kind == :action_property
+      assert violation.property == "MonotonicTokens"
+    end
+
+    test "extracts counterexample trace" do
+      {:error, violation, _stats} = TLCParser.parse(@action_property_violation)
+      assert length(violation.trace) == 3
+      assert Enum.at(violation.trace, 2).assignments["fence_token"] == "1"
+    end
+
+    test "extracts stats" do
+      {:error, _violation, stats} = TLCParser.parse(@action_property_violation)
+      assert stats.states_generated == 55
+      assert stats.distinct_states == 55
+      assert stats.depth == 5
+    end
+  end
+
   # -- Deadlock --
 
   @deadlock_output """

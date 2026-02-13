@@ -22,7 +22,7 @@ defmodule Accord.TLA.TLCParser do
         }
 
   @type violation :: %{
-          kind: :invariant | :deadlock | :temporal,
+          kind: :invariant | :deadlock | :temporal | :action_property,
           property: String.t() | nil,
           trace: trace()
         }
@@ -47,6 +47,11 @@ defmodule Accord.TLA.TLCParser do
         property = extract_invariant_name(lines)
         trace = parse_trace(lines)
         {:error, %{kind: :invariant, property: property, trace: trace}, stats}
+
+      action_property_violation?(lines) ->
+        property = extract_action_property_name(lines)
+        trace = parse_trace(lines)
+        {:error, %{kind: :action_property, property: property, trace: trace}, stats}
 
       deadlock?(lines) ->
         trace = parse_trace(lines)
@@ -76,16 +81,27 @@ defmodule Accord.TLA.TLCParser do
     Enum.any?(lines, &String.contains?(&1, "Error: Deadlock reached."))
   end
 
+  defp action_property_violation?(lines) do
+    Enum.any?(lines, &Regex.match?(~r/^Error: Action property .+ is violated/, &1))
+  end
+
   defp temporal_violation?(lines) do
     Enum.any?(lines, &String.contains?(&1, "Error: Temporal properties were violated."))
   end
 
-  # -- Invariant name extraction --
+  # -- Property name extraction --
 
   defp extract_invariant_name(lines) do
-    lines
-    |> Enum.find_value(fn line ->
-      case Regex.run(~r/^Error: Invariant (.+) is violated/, line) do
+    extract_property_name(lines, ~r/^Error: Invariant (.+) is violated/)
+  end
+
+  defp extract_action_property_name(lines) do
+    extract_property_name(lines, ~r/^Error: Action property (.+) is violated/)
+  end
+
+  defp extract_property_name(lines, regex) do
+    Enum.find_value(lines, fn line ->
+      case Regex.run(regex, line) do
         [_, name] -> name
         _ -> nil
       end
