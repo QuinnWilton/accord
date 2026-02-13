@@ -52,7 +52,16 @@ defmodule Accord.Protocol do
   defmacro __using__(opts) do
     quote do
       import Accord.Protocol,
-        only: [initial: 1, state: 2, state: 3, anystate: 1, on: 2, cast: 1]
+        only: [
+          initial: 1,
+          role: 1,
+          track: 3,
+          state: 2,
+          state: 3,
+          anystate: 1,
+          on: 2,
+          cast: 1
+        ]
 
       Module.register_attribute(__MODULE__, :accord_initial, [])
       Module.register_attribute(__MODULE__, :accord_states, accumulate: true)
@@ -74,6 +83,47 @@ defmodule Accord.Protocol do
   defmacro initial(state_name) do
     quote do
       Module.put_attribute(__MODULE__, :accord_initial, unquote(state_name))
+    end
+  end
+
+  @doc """
+  Declares a participant role.
+  """
+  defmacro role(name) do
+    span = span_ast(__CALLER__)
+
+    quote do
+      Module.put_attribute(
+        __MODULE__,
+        :accord_roles,
+        %Accord.IR.Role{name: unquote(name), span: unquote(span)}
+      )
+    end
+  end
+
+  @doc """
+  Declares a tracked accumulator.
+
+      track :counter, :non_neg_integer, default: 0
+      track :holder, :term, default: nil
+  """
+  defmacro track(name, type, opts) do
+    default = Keyword.fetch!(opts, :default)
+    type_value = parse_track_type(type)
+    escaped_type = Macro.escape(type_value)
+    span = span_ast(__CALLER__)
+
+    quote do
+      Module.put_attribute(
+        __MODULE__,
+        :accord_tracks,
+        %Accord.IR.Track{
+          name: unquote(name),
+          type: unquote(escaped_type),
+          default: unquote(default),
+          span: unquote(span)
+        }
+      )
     end
   end
 
@@ -165,12 +215,100 @@ defmodule Accord.Protocol do
   end
 
   @doc """
-  Defines a transition in keyword form.
+  Defines a transition.
+
+  ## Keyword form
 
       on :ping, reply: :pong
       on :stop, reply: :stopped, goto: :stopped
       on {:get, key :: atom()}, reply: term(), goto: :ready
+
+  ## Block form
+
+      on {:acquire, client_id :: term(), token :: pos_integer()} do
+        reply {:ok, pos_integer()}
+        goto :locked
+        guard fn {:acquire, _client_id, token}, tracks ->
+          token > tracks.fence_token
+        end
+        update fn {:acquire, client_id, token}, _reply, tracks ->
+          %{tracks | holder: client_id, fence_token: token}
+        end
+      end
+
+  ## Branching form
+
+      on {:bet, chips :: pos_integer()} do
+        guard fn {:bet, chips}, tracks -> chips <= tracks.balance end
+        branch {:ok, %Bet{}} -> :dealt
+        branch {:error, :insufficient_funds} -> :waiting
+      end
   """
+  defmacro on(message_spec, do: block) do
+    {message_pattern, message_types} = parse_message_spec(message_spec)
+    escaped_types = Macro.escape(message_types)
+    span = span_ast(__CALLER__)
+
+    quote do
+      import Accord.Protocol.Block
+
+      Module.put_attribute(__MODULE__, :accord_on_reply_type, nil)
+      Module.put_attribute(__MODULE__, :accord_on_goto, nil)
+      Module.put_attribute(__MODULE__, :accord_on_guard, nil)
+      Module.put_attribute(__MODULE__, :accord_on_update, nil)
+      Module.put_attribute(__MODULE__, :accord_on_branches, [])
+
+      unquote(block)
+
+      reply_type = Module.get_attribute(__MODULE__, :accord_on_reply_type)
+      goto_state = Module.get_attribute(__MODULE__, :accord_on_goto)
+      guard_pair = Module.get_attribute(__MODULE__, :accord_on_guard)
+      update_pair = Module.get_attribute(__MODULE__, :accord_on_update)
+      explicit_branches = Module.get_attribute(__MODULE__, :accord_on_branches) |> Enum.reverse()
+
+      in_anystate = Module.get_attribute(__MODULE__, :accord_in_anystate, false)
+
+      # Build branches: explicit branches take precedence, else build from reply/goto.
+      branches =
+        if explicit_branches != [] do
+          explicit_branches
+        else
+          next = if in_anystate, do: :__same__, else: goto_state
+
+          if reply_type do
+            [%Branch{reply_type: reply_type, next_state: next || :__same__, span: unquote(span)}]
+          else
+            []
+          end
+        end
+
+      transition = %Transition{
+        message_pattern: unquote(message_pattern),
+        message_types: unquote(escaped_types),
+        kind: :call,
+        branches: branches,
+        guard: guard_pair,
+        update: update_pair,
+        span: unquote(span)
+      }
+
+      if in_anystate do
+        Module.put_attribute(__MODULE__, :accord_anystate, transition)
+      else
+        current = Module.get_attribute(__MODULE__, :accord_current_transitions)
+        Module.put_attribute(__MODULE__, :accord_current_transitions, [transition | current])
+      end
+
+      Module.delete_attribute(__MODULE__, :accord_on_reply_type)
+      Module.delete_attribute(__MODULE__, :accord_on_goto)
+      Module.delete_attribute(__MODULE__, :accord_on_guard)
+      Module.delete_attribute(__MODULE__, :accord_on_update)
+      Module.delete_attribute(__MODULE__, :accord_on_branches)
+
+      import Accord.Protocol.Block, only: []
+    end
+  end
+
   defmacro on(message_spec, opts) when is_list(opts) do
     reply_spec = Keyword.fetch!(opts, :reply)
     next_state = Keyword.get(opts, :goto)
@@ -318,13 +456,24 @@ defmodule Accord.Protocol do
       track_init: track_init
     }
 
-    escaped_ir = Macro.escape(ir)
-    escaped_compiled = Macro.escape(compiled)
+    # Store IR and compiled data in module attributes. We use
+    # persistent_term to make them accessible from def bodies, since
+    # Macro.escape can't handle closures in guard/update functions.
+    Module.put_attribute(env.module, :accord_ir, ir)
+    Module.put_attribute(env.module, :accord_compiled, compiled)
+
     monitor_module = Module.concat(env.module, Monitor)
+    pt_key = {Accord.Protocol, env.module}
 
     quote do
-      def __ir__, do: unquote(escaped_ir)
-      def __compiled__, do: unquote(escaped_compiled)
+      # Module body: evaluated at compile time. @accord_ir/@accord_compiled
+      # read the attribute values (including closures) as-is, then stash
+      # them in persistent_term for runtime access from def bodies.
+      :persistent_term.put({unquote(pt_key), :ir}, @accord_ir)
+      :persistent_term.put({unquote(pt_key), :compiled}, @accord_compiled)
+
+      def __ir__, do: :persistent_term.get({unquote(pt_key), :ir})
+      def __compiled__, do: :persistent_term.get({unquote(pt_key), :compiled})
 
       defmodule unquote(monitor_module) do
         @moduledoc """
@@ -333,10 +482,9 @@ defmodule Accord.Protocol do
         Thin wrapper around `Accord.Monitor` with compiled protocol data baked in.
         """
 
-        @compiled unquote(escaped_compiled)
-
         def start_link(opts) do
-          Accord.Monitor.start_link(@compiled, opts)
+          compiled = :persistent_term.get({unquote(pt_key), :compiled})
+          Accord.Monitor.start_link(compiled, opts)
         end
 
         def child_spec(opts) do
@@ -468,6 +616,18 @@ defmodule Accord.Protocol do
       multiple -> {:tagged, tag_value, multiple}
     end
   end
+
+  # -- Track Type Parsing --
+
+  defp parse_track_type(:string), do: :string
+  defp parse_track_type(:integer), do: :integer
+  defp parse_track_type(:pos_integer), do: :pos_integer
+  defp parse_track_type(:non_neg_integer), do: :non_neg_integer
+  defp parse_track_type(:atom), do: :atom
+  defp parse_track_type(:binary), do: :binary
+  defp parse_track_type(:boolean), do: :boolean
+  defp parse_track_type(:term), do: :term
+  defp parse_track_type(:map), do: :map
 
   # -- Span Helpers --
 
