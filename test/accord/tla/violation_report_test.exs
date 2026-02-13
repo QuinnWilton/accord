@@ -235,6 +235,82 @@ defmodule Accord.TLA.ViolationReportTest do
     end
   end
 
+  describe "action property state diff" do
+    test "shows changed variables between last two trace states" do
+      violation = %{
+        kind: :action_property,
+        property: "MonotonicTokens",
+        message: nil,
+        trace: [
+          %{
+            number: 1,
+            action: nil,
+            assignments: %{"state" => "\"unlocked\"", "fence_token" => "0", "holder" => "NULL"}
+          },
+          %{
+            number: 2,
+            action: "AcquireFromUnlockedToLocked",
+            assignments: %{"state" => "\"locked\"", "fence_token" => "3", "holder" => "c1"}
+          },
+          %{
+            number: 3,
+            action: "ReleaseFromLockedToUnlocked",
+            assignments: %{"state" => "\"unlocked\"", "fence_token" => "1", "holder" => "c2"}
+          }
+        ]
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      assert formatted =~ "changed:"
+      assert formatted =~ "fence_token"
+      assert formatted =~ "holder"
+    end
+
+    test "no diff with single trace entry" do
+      violation = %{
+        kind: :action_property,
+        property: "MonotonicTokens",
+        message: nil,
+        trace: [
+          %{
+            number: 1,
+            action: nil,
+            assignments: %{"state" => "\"unlocked\"", "fence_token" => "0"}
+          }
+        ]
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      refute formatted =~ "changed:"
+    end
+
+    test "no diff for non-action-property violations" do
+      violation = %{
+        kind: :invariant,
+        property: "SomeInvariant",
+        message: nil,
+        trace: [
+          %{
+            number: 1,
+            action: nil,
+            assignments: %{"state" => "\"unlocked\"", "fence_token" => "0"}
+          },
+          %{
+            number: 2,
+            action: "SomeAction",
+            assignments: %{"state" => "\"locked\"", "fence_token" => "3"}
+          }
+        ]
+      }
+
+      formatted = ViolationReport.format(violation, @mock)
+
+      refute formatted =~ "changed:"
+    end
+  end
+
   describe "strict mode" do
     test "raises on nil span for unknown property" do
       violation = %{

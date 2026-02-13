@@ -38,6 +38,7 @@ defmodule Accord.TLA.ViolationReport do
       |> add_trace_notes(violation)
       |> add_type_invariant_hint(violation, protocol_mod)
       |> add_deadlock_hint(violation, protocol_mod)
+      |> add_action_property_hint(violation)
 
     render(report, protocol_mod)
   end
@@ -374,7 +375,9 @@ defmodule Accord.TLA.ViolationReport do
             "variable '#{var_name}' is at #{boundary} of its domain #{lo}..#{hi}" <>
               " — transitions from :#{state_atom} requiring values beyond this boundary cannot fire"
           )
-          |> Report.with_help("widen the domain for '#{var_name}'")
+          |> Report.with_help(
+            "widen the domain in `.accord_model.exs` — `domains: %{#{var_name}: #{lo}..#{hi * 2}}`"
+          )
         end)
     end
   end
@@ -403,6 +406,40 @@ defmodule Accord.TLA.ViolationReport do
       [_, inner] -> String.to_atom(inner)
       _ -> nil
     end
+  end
+
+  # -- Action Property Diff --
+
+  # For action property violations, diff the last two trace states to show
+  # which variables changed in the violating step.
+  defp add_action_property_hint(report, %{kind: :action_property, trace: trace})
+       when length(trace) >= 2 do
+    before = Enum.at(trace, -2)
+    after_ = List.last(trace)
+    diff = compute_assignment_diff(before.assignments, after_.assignments)
+
+    case diff do
+      [] ->
+        report
+
+      changes ->
+        diff_str = Enum.map_join(changes, ", ", fn {k, old, new} -> "#{k}: #{old} → #{new}" end)
+        Report.with_note(report, "changed: #{diff_str}")
+    end
+  end
+
+  defp add_action_property_hint(report, _violation), do: report
+
+  # Find keys where values differ between two assignment maps, sorted alphabetically.
+  defp compute_assignment_diff(before, after_) do
+    before
+    |> Enum.flat_map(fn {key, old_val} ->
+      case Map.get(after_, key) do
+        new_val when new_val != old_val and not is_nil(new_val) -> [{key, old_val, new_val}]
+        _ -> []
+      end
+    end)
+    |> Enum.sort_by(&elem(&1, 0))
   end
 
   # Parse "N..M" range domains. Returns nil for non-range domains (sets, STRING, etc.).
