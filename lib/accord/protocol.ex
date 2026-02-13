@@ -456,34 +456,33 @@ defmodule Accord.Protocol do
       track_init: track_init
     }
 
-    # Store IR and compiled data in module attributes. We use
-    # persistent_term to make them accessible from def bodies, since
-    # Macro.escape can't handle closures in guard/update functions.
-    Module.put_attribute(env.module, :accord_ir, ir)
-    Module.put_attribute(env.module, :accord_compiled, compiled)
+    # Store IR and compiled data as serialized binaries in module
+    # attributes. Closures can't be embedded via @attr in function bodies
+    # (Elixir tries Macro.escape which fails on funs), but
+    # :erlang.term_to_binary handles funs correctly and the resulting
+    # binary embeds as a constant in the .beam file. This survives
+    # compilation caching — no persistent_term needed.
+    ir_bin = :erlang.term_to_binary(ir)
+    compiled_bin = :erlang.term_to_binary(compiled)
+    Module.put_attribute(env.module, :accord_ir_bin, ir_bin)
+    Module.put_attribute(env.module, :accord_compiled_bin, compiled_bin)
 
     monitor_module = Module.concat(env.module, Monitor)
-    pt_key = {Accord.Protocol, env.module}
+    parent_module = env.module
 
     quote do
-      # Module body: evaluated at compile time. @accord_ir/@accord_compiled
-      # read the attribute values (including closures) as-is, then stash
-      # them in persistent_term for runtime access from def bodies.
-      :persistent_term.put({unquote(pt_key), :ir}, @accord_ir)
-      :persistent_term.put({unquote(pt_key), :compiled}, @accord_compiled)
-
-      def __ir__, do: :persistent_term.get({unquote(pt_key), :ir})
-      def __compiled__, do: :persistent_term.get({unquote(pt_key), :compiled})
+      def __ir__, do: :erlang.binary_to_term(@accord_ir_bin)
+      def __compiled__, do: :erlang.binary_to_term(@accord_compiled_bin)
 
       defmodule unquote(monitor_module) do
         @moduledoc """
-        Runtime monitor for `#{inspect(unquote(env.module))}`.
+        Runtime monitor for `#{inspect(unquote(parent_module))}`.
 
         Thin wrapper around `Accord.Monitor` with compiled protocol data baked in.
         """
 
         def start_link(opts) do
-          compiled = :persistent_term.get({unquote(pt_key), :compiled})
+          compiled = unquote(parent_module).__compiled__()
           Accord.Monitor.start_link(compiled, opts)
         end
 

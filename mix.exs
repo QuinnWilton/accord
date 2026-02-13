@@ -41,6 +41,7 @@ defmodule Accord.MixProject do
   defp deps do
     [
       {:pentiment, path: "../pentiment"},
+      {:propcheck, "~> 1.4", only: [:dev, :test]},
       {:stream_data, "~> 1.0", only: [:dev, :test]},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false}
