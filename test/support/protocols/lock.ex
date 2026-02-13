@@ -54,6 +54,25 @@ defmodule Accord.Test.Lock.Protocol do
     on :ping, reply: :pong
     cast :heartbeat
   end
+
+  # -- Properties --
+
+  property :monotonic_tokens do
+    action fn old, new -> new.fence_token >= old.fence_token end
+  end
+
+  property :holder_consistency do
+    invariant :locked, fn _msg, tracks -> tracks.holder != nil end
+    invariant :unlocked, fn _msg, tracks -> tracks.holder == nil end
+  end
+
+  property :lock_implies_token do
+    invariant :locked, fn _msg, tracks -> tracks.fence_token > 0 end
+  end
+
+  property :acquire_release do
+    correspondence :acquire, [:release]
+  end
 end
 
 defmodule Accord.Test.Lock.Server do
