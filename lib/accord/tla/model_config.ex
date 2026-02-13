@@ -21,6 +21,13 @@ defmodule Accord.TLA.ModelConfig do
   - `[:a, :b, :c]` — explicit set
   - `{:model_values, 3}` — TLC generates 3 abstract values with symmetry
   - `{:model_values, [:c1, :c2]}` — named TLC model values with symmetry
+
+  ## Security model
+
+  Config files are loaded via `Code.eval_file/1`, which executes arbitrary
+  Elixir code. This follows the same convention as Mix config files
+  (`config/config.exs`). The security boundary is the project directory —
+  these files are authored by the developer and checked into version control.
   """
 
   @type domain ::
