@@ -17,12 +17,30 @@ defmodule Accord.Violation.Report do
   ## In property tests
 
       report = Accord.Violation.Report.failure_report(history, compiled)
+
+  ## Strict mode
+
+  Pass `strict: true` to raise on missing or invalid spans. This is
+  intended for test environments to catch span regressions early.
+
+      formatted = Accord.Violation.Report.format(violation, compiled, strict: true)
   """
 
   alias Accord.IR.Type
   alias Accord.Monitor.{Compiled, TransitionTable}
   alias Accord.Violation
+  alias Accord.Violation.SpanValidation
   alias Pentiment.{Label, Report, Source}
+
+  # Violation kinds that are expected to have source spans when a source file
+  # is present. Missing spans for these kinds trigger a raise in strict mode.
+  @spannable_kinds [
+    :invalid_reply,
+    :argument_type,
+    :guard_failed,
+    :invariant_violated,
+    :action_violated
+  ]
 
   # -- Public API --
 
@@ -31,12 +49,17 @@ defmodule Accord.Violation.Report do
 
   Looks up the transition in the protocol's transition table to find the
   source span, then renders a full pentiment diagnostic with source context.
+
+  ## Options
+
+    * `:strict` - when `true`, raises on missing or invalid spans for
+      violation kinds that should have them. Defaults to `false`.
   """
-  @spec format(Violation.t(), Compiled.t()) :: String.t()
-  def format(%Violation{} = violation, %Compiled{} = compiled) do
+  @spec format(Violation.t(), Compiled.t(), keyword()) :: String.t()
+  def format(%Violation{} = violation, %Compiled{} = compiled, opts \\ []) do
     report =
       build_report(violation)
-      |> add_source_label(violation, compiled)
+      |> add_source_label(violation, compiled, opts)
 
     case compiled.ir.source_file do
       path when is_binary(path) ->
@@ -72,12 +95,17 @@ defmodule Accord.Violation.Report do
   summary showing the protocol state progression.
 
   Falls back to `inspect` for non-violation failures.
-  """
-  @spec failure_report(list(), list(), Compiled.t(), [Violation.t()]) :: String.t()
-  def failure_report(history, commands, compiled, property_violations \\ [])
 
-  def failure_report(history, commands, %Compiled{} = compiled, property_violations) do
-    output = format_failure(history, commands, compiled)
+  ## Options
+
+    * `:strict` - when `true`, raises on missing or invalid spans.
+      Defaults to `false`.
+  """
+  @spec failure_report(list(), list(), Compiled.t(), [Violation.t()], keyword()) :: String.t()
+  def failure_report(history, commands, compiled, property_violations \\ [], opts \\ [])
+
+  def failure_report(history, commands, %Compiled{} = compiled, property_violations, opts) do
+    output = format_failure(history, commands, compiled, opts)
 
     case property_violations do
       [] ->
@@ -85,7 +113,7 @@ defmodule Accord.Violation.Report do
 
       violations ->
         formatted =
-          Enum.map_join(violations, "\n", fn v -> "  " <> format(v, compiled) end)
+          Enum.map_join(violations, "\n", fn v -> "  " <> format(v, compiled, opts) end)
 
         output <> "\n\nProperty violations detected during run:\n" <> formatted
     end
@@ -155,7 +183,7 @@ defmodule Accord.Violation.Report do
 
   # -- Source Labels --
 
-  defp add_source_label(report, violation, compiled) do
+  defp add_source_label(report, violation, compiled, opts) do
     case compiled.ir.source_file do
       nil ->
         report
@@ -163,10 +191,22 @@ defmodule Accord.Violation.Report do
       path ->
         report = Report.with_source(report, path)
         span = violation.span || lookup_transition_span(violation, compiled)
+        strict? = Keyword.get(opts, :strict, false)
 
-        case span do
-          nil -> report
-          span -> Report.with_label(report, Label.primary(span, label_message(violation.kind)))
+        cond do
+          span != nil and strict? ->
+            SpanValidation.validate_span!(span, "#{violation.kind} in state :#{violation.state}")
+            Report.with_label(report, Label.primary(span, label_message(violation.kind)))
+
+          span != nil ->
+            Report.with_label(report, Label.primary(span, label_message(violation.kind)))
+
+          strict? and violation.kind in @spannable_kinds ->
+            raise ArgumentError,
+                  "missing span for #{violation.kind} in state :#{violation.state}"
+
+          true ->
+            report
         end
     end
   end
@@ -233,13 +273,13 @@ defmodule Accord.Violation.Report do
 
   # -- Failure Formatting --
 
-  defp format_failure(history, commands, compiled) do
+  defp format_failure(history, commands, compiled, opts) do
     steps = format_step_summary(history, commands)
 
     diagnostic =
       case List.last(history) do
         {_model_state, {:accord_violation, %Violation{} = violation}} ->
-          format(violation, compiled)
+          format(violation, compiled, opts)
 
         {_model_state, result} ->
           "Failing result: #{inspect(result, pretty: true)}"

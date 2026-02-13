@@ -22,7 +22,8 @@ defmodule Accord.PropertyFailure do
       e.history,
       e.commands,
       e.compiled,
-      e.violations
+      e.violations,
+      strict: true
     )
   end
 end

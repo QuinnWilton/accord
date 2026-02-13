@@ -171,7 +171,7 @@ defmodule Accord.ViolationSpanTest do
       assert arg_span.pattern == "pos_integer()"
 
       # Report highlights the type annotation.
-      formatted = Accord.Violation.Report.format(violation, compiled)
+      formatted = Accord.Violation.Report.format(violation, compiled, strict: true)
       assert formatted =~ "pos_integer()"
 
       assert_search_span_valid(arg_span, compiled.ir.source_file)

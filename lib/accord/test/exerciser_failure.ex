@@ -87,7 +87,7 @@ defmodule Accord.Test.ExerciserFailure do
   # -- Failing step diagnostic --
 
   defp format_failing_step(%{actual: {:accord_violation, %Violation{} = v}}, %{} = compiled) do
-    Violation.Report.format(v, compiled)
+    Violation.Report.format(v, compiled, strict: true)
   end
 
   defp format_failing_step(%{actual: {:accord_violation, %Violation{} = v}}, _compiled) do
@@ -105,7 +105,7 @@ defmodule Accord.Test.ExerciserFailure do
   defp format_property_violations(violations, %{} = compiled) do
     formatted =
       Enum.map_join(violations, "\n\n", fn v ->
-        Violation.Report.format(v, compiled)
+        Violation.Report.format(v, compiled, strict: true)
       end)
 
     "\n\nProperty violations detected during run:\n" <> formatted
