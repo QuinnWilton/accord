@@ -204,7 +204,11 @@ defmodule Accord.Pass.TLA.BuildActions do
   end
 
   defp build_existentials(
-         %Transition{message_pattern: pattern, message_types: types, message_arg_names: arg_names},
+         %Transition{
+           message_pattern: pattern,
+           message_types: types,
+           message_arg_names: arg_names
+         },
          config
        ) do
     case pattern do
