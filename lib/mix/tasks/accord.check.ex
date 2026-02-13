@@ -43,7 +43,17 @@ defmodule Mix.Tasks.Accord.Check do
       if modules == [] do
         discover_protocols()
       else
-        Enum.map(modules, &Module.concat([String.to_atom(&1)]))
+        Enum.map(modules, fn name ->
+          atom =
+            try do
+              String.to_existing_atom(name)
+            rescue
+              ArgumentError ->
+                Mix.raise("Unknown module: #{name}. Is the module compiled?")
+            end
+
+          Module.concat([atom])
+        end)
       end
 
     if protocols == [] do
@@ -71,6 +81,7 @@ defmodule Mix.Tasks.Accord.Check do
       module =
         beam_path
         |> Path.basename(".beam")
+        # Safe: beam file names correspond to already-loaded atoms.
         |> String.to_atom()
 
       if Code.ensure_loaded?(module) and function_exported?(module, :__tla_span__, 1) do
