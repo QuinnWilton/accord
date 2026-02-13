@@ -17,7 +17,7 @@ defmodule Accord.Pass.RefineSpans do
   def run(%IR{source_file: source_file} = ir) do
     case File.read(source_file) do
       {:ok, content} ->
-        lines = String.split(content, "\n")
+        lines = content |> String.split("\n") |> List.to_tuple()
         ir = refine_ir(ir, lines)
         {:ok, ir}
 
@@ -68,8 +68,8 @@ defmodule Accord.Pass.RefineSpans do
   defp refine_span_to_token(span, _lines, nil), do: span
 
   defp refine_span_to_token(%Span.Position{start_line: line} = span, lines, target) do
-    if line > 0 and line <= length(lines) do
-      source_line = Enum.at(lines, line - 1)
+    if line > 0 and line <= tuple_size(lines) do
+      source_line = elem(lines, line - 1)
       search_target = ":#{target}"
 
       case :binary.match(source_line, search_target) do
