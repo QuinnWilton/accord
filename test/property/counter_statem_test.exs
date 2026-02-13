@@ -271,12 +271,7 @@ defmodule Accord.Property.CounterStatemTest do
       if Process.alive?(faulty), do: GenServer.stop(faulty, :normal, 100)
 
       (result == :ok)
-      |> when_fail(
-        IO.puts("""
-        History: #{inspect(history, pretty: true)}
-        Result: #{inspect(result)}
-        """)
-      )
+      |> when_fail(Accord.Violation.Report.print_failure(history, compiled))
     end
   end
 end
