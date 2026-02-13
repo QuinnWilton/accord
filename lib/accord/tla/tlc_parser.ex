@@ -39,71 +39,52 @@ defmodule Accord.TLA.TLCParser do
     lines = String.split(output, "\n")
     stats = parse_stats(lines)
 
-    cond do
-      success?(lines) ->
+    case classify_output(lines) do
+      :success ->
         {:ok, stats}
 
-      invariant_violation?(lines) ->
-        property = extract_invariant_name(lines)
+      {:invariant, property} ->
         trace = parse_trace(lines)
         {:error, %{kind: :invariant, property: property, trace: trace}, stats}
 
-      action_property_violation?(lines) ->
-        property = extract_action_property_name(lines)
+      {:action_property, property} ->
         trace = parse_trace(lines)
         {:error, %{kind: :action_property, property: property, trace: trace}, stats}
 
-      deadlock?(lines) ->
+      :deadlock ->
         trace = parse_trace(lines)
         {:error, %{kind: :deadlock, property: nil, trace: trace}, stats}
 
-      temporal_violation?(lines) ->
+      :temporal ->
         trace = parse_trace(lines)
         {:error, %{kind: :temporal, property: nil, trace: trace}, stats}
 
-      true ->
-        # Unknown output — treat as error with empty trace.
+      :unknown ->
         {:error, %{kind: :invariant, property: nil, trace: []}, stats}
     end
   end
 
-  # -- Detection --
+  # Single-pass classification of TLC output.
+  defp classify_output(lines) do
+    Enum.reduce_while(lines, :unknown, fn line, acc ->
+      cond do
+        String.contains?(line, "Model checking completed. No error has been found.") ->
+          {:halt, :success}
 
-  defp success?(lines) do
-    Enum.any?(lines, &String.contains?(&1, "Model checking completed. No error has been found."))
-  end
+        match = Regex.run(~r/^Error: Invariant (.+) is violated/, line) ->
+          {:halt, {:invariant, Enum.at(match, 1)}}
 
-  defp invariant_violation?(lines) do
-    Enum.any?(lines, &Regex.match?(~r/^Error: Invariant .+ is violated/, &1))
-  end
+        match = Regex.run(~r/^Error: Action property (.+) is violated/, line) ->
+          {:halt, {:action_property, Enum.at(match, 1)}}
 
-  defp deadlock?(lines) do
-    Enum.any?(lines, &String.contains?(&1, "Error: Deadlock reached."))
-  end
+        String.contains?(line, "Error: Deadlock reached.") ->
+          {:halt, :deadlock}
 
-  defp action_property_violation?(lines) do
-    Enum.any?(lines, &Regex.match?(~r/^Error: Action property .+ is violated/, &1))
-  end
+        String.contains?(line, "Error: Temporal properties were violated.") ->
+          {:halt, :temporal}
 
-  defp temporal_violation?(lines) do
-    Enum.any?(lines, &String.contains?(&1, "Error: Temporal properties were violated."))
-  end
-
-  # -- Property name extraction --
-
-  defp extract_invariant_name(lines) do
-    extract_property_name(lines, ~r/^Error: Invariant (.+) is violated/)
-  end
-
-  defp extract_action_property_name(lines) do
-    extract_property_name(lines, ~r/^Error: Action property (.+) is violated/)
-  end
-
-  defp extract_property_name(lines, regex) do
-    Enum.find_value(lines, fn line ->
-      case Regex.run(regex, line) do
-        [_, name] -> name
-        _ -> nil
+        true ->
+          {:cont, acc}
       end
     end)
   end
@@ -128,6 +109,7 @@ defmodule Accord.TLA.TLCParser do
   end
 
   # Split lines into groups, each starting with "State N:" or "Back to state N:".
+  # Builds lists in reverse (prepending) and reverses at the end.
   defp split_into_state_blocks(lines) do
     {blocks, current} =
       Enum.reduce(lines, {[], []}, fn line, {blocks, current} ->
@@ -138,23 +120,23 @@ defmodule Accord.TLA.TLCParser do
             if current == [] do
               {blocks, [trimmed]}
             else
-              {blocks ++ [current], [trimmed]}
+              {[Enum.reverse(current) | blocks], [trimmed]}
             end
 
           Regex.match?(~r/^Back to state \d+:/, trimmed) ->
             if current == [] do
               {blocks, [trimmed]}
             else
-              {blocks ++ [current], [trimmed]}
+              {[Enum.reverse(current) | blocks], [trimmed]}
             end
 
           # Stop at non-trace lines (stats, empty lines after trace).
           trimmed == "" and current != [] ->
-            {blocks ++ [current], []}
+            {[Enum.reverse(current) | blocks], []}
 
           # Assignment lines or continuation.
           String.starts_with?(trimmed, "/\\") ->
-            {blocks, current ++ [trimmed]}
+            {blocks, [trimmed | current]}
 
           # Skip other lines.
           current == [] ->
@@ -163,14 +145,15 @@ defmodule Accord.TLA.TLCParser do
           # Non-assignment, non-state line after trace starts — end of trace.
           true ->
             if current != [] do
-              {blocks ++ [current], []}
+              {[Enum.reverse(current) | blocks], []}
             else
               {blocks, current}
             end
         end
       end)
 
-    if current != [], do: blocks ++ [current], else: blocks
+    blocks = if current != [], do: [Enum.reverse(current) | blocks], else: blocks
+    Enum.reverse(blocks)
   end
 
   defp parse_state_block([header | rest]) do
