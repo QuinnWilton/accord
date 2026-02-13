@@ -10,7 +10,9 @@ defmodule Accord.Pass.ResolveFieldPaths do
   """
 
   alias Accord.IR
-  alias Pentiment.{Label, Report}
+  alias Pentiment.Report
+
+  import Accord.Pass.Helpers
 
   @spec run(IR.t()) :: {:ok, IR.t()} | {:error, [Report.t()]}
   def run(%IR{} = ir) do
@@ -141,17 +143,5 @@ defmodule Accord.Pass.ResolveFieldPaths do
       Enum.flat_map(states, fn {_name, state} -> state.transitions end) ++ anystate
 
     Enum.group_by(all_transitions, &message_tag/1)
-  end
-
-  defp message_tag(%{message_pattern: pattern}) when is_atom(pattern), do: pattern
-  defp message_tag(%{message_pattern: pattern}) when is_tuple(pattern), do: elem(pattern, 0)
-
-  defp maybe_add_source(report, nil), do: report
-  defp maybe_add_source(report, source), do: Report.with_source(report, source)
-
-  defp maybe_add_span_label(report, nil, _msg), do: report
-
-  defp maybe_add_span_label(report, span, msg) do
-    Report.with_label(report, Label.primary(span, msg))
   end
 end

@@ -9,6 +9,8 @@ defmodule Accord.Pass.ValidateDeterminism do
   alias Accord.IR
   alias Pentiment.{Label, Report}
 
+  import Accord.Pass.Helpers
+
   @spec run(IR.t()) :: {:ok, IR.t()} | {:error, [Report.t()]}
   def run(%IR{} = ir) do
     errors =
@@ -59,14 +61,5 @@ defmodule Accord.Pass.ValidateDeterminism do
         []
       end
     end)
-  end
-
-  defp maybe_add_source(report, nil), do: report
-  defp maybe_add_source(report, source), do: Report.with_source(report, source)
-
-  defp message_tag(%{message_pattern: pattern}) when is_atom(pattern), do: pattern
-
-  defp message_tag(%{message_pattern: pattern}) when is_tuple(pattern) do
-    elem(pattern, 0)
   end
 end

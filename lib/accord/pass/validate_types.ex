@@ -9,7 +9,9 @@ defmodule Accord.Pass.ValidateTypes do
 
   alias Accord.IR
   alias Accord.Type.Check
-  alias Pentiment.{Label, Report}
+  alias Pentiment.Report
+
+  import Accord.Pass.Helpers
 
   @spec run(IR.t()) :: {:ok, IR.t()} | {:error, [Report.t()]}
   def run(%IR{} = ir) do
@@ -61,14 +63,5 @@ defmodule Accord.Pass.ValidateTypes do
         acc
       end
     end)
-  end
-
-  defp maybe_add_source(report, nil), do: report
-  defp maybe_add_source(report, source), do: Report.with_source(report, source)
-
-  defp maybe_add_span_label(report, nil, _msg), do: report
-
-  defp maybe_add_span_label(report, span, msg) do
-    Report.with_label(report, Label.primary(span, msg))
   end
 end
