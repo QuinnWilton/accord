@@ -44,6 +44,9 @@ defmodule Accord.Test.ProtocolExerciser do
   - `:max_commands` — max commands per test case. Default `30`.
   """
   @spec run(keyword()) :: :ok | no_return()
+  # PropCheck's forall macro produces an opaque :proper.outer_test() that
+  # dialyzer cannot track through the macro expansion.
+  @dialyzer {:no_opaque, run: 1}
   def run(opts) do
     protocol = Keyword.fetch!(opts, :protocol)
     server = Keyword.fetch!(opts, :server)
