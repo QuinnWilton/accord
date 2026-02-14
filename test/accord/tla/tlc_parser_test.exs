@@ -262,6 +262,138 @@ defmodule Accord.TLA.TLCParserTest do
     end
   end
 
+  # -- Stuttering liveness violation --
+
+  @stuttering_liveness_output """
+  TLC2 Version 2.18 of 22 July 2022
+
+  Computing initial states...
+  Finished computing initial states: 1 distinct state generated.
+
+  Checking temporal properties for the current state space with 10 total distinct states
+
+  Error: Temporal properties were violated.
+
+  Error: The following behavior constitutes a counter-example:
+
+  State 1: <Initial predicate>
+  /\\ state = "idle"
+  /\\ pending = 0
+
+  State 2: <RequestFromIdleToWaiting line 10, col 1 to line 20, col 40 of module Protocol>
+  /\\ state = "waiting"
+  /\\ pending = 1
+
+  State 3: Stuttering
+
+  20 states generated, 10 distinct states found, 0 states left on queue.
+  The depth of the complete state graph search is 3.
+  Finished in 01s at (2023-03-09 15:53:06)
+  """
+
+  describe "stuttering liveness violation" do
+    test "parses stuttering state" do
+      {:error, violation, _stats} = TLCParser.parse(@stuttering_liveness_output)
+      trace = violation.trace
+
+      assert length(trace) == 3
+
+      stuttering = Enum.at(trace, 2)
+      assert stuttering.number == 3
+      assert stuttering.action == :stuttering
+      assert stuttering.assignments == %{}
+    end
+
+    test "detects temporal violation" do
+      {:error, violation, _stats} = TLCParser.parse(@stuttering_liveness_output)
+      assert violation.kind == :temporal
+    end
+
+    test "extracts stats" do
+      {:error, _violation, stats} = TLCParser.parse(@stuttering_liveness_output)
+      assert stats.states_generated == 20
+      assert stats.distinct_states == 10
+      assert stats.depth == 3
+    end
+  end
+
+  # -- Bare assignments --
+
+  describe "bare assignments" do
+    test "parses trace with bare assignment lines (no /\\ prefix)" do
+      output = """
+      Error: Temporal properties were violated.
+
+      Error: The following behavior constitutes a counter-example:
+
+      State 1: <Initial predicate>
+      state = "idle"
+      counter = 0
+
+      State 2: <GoFromIdleToRunning line 10, col 1 to line 20, col 40 of module Protocol>
+      state = "running"
+      counter = 1
+
+      State 3: Stuttering
+
+      5 states generated, 3 distinct states found, 0 states left on queue.
+      """
+
+      {:error, violation, _stats} = TLCParser.parse(output)
+      trace = violation.trace
+
+      assert length(trace) == 3
+
+      initial = Enum.at(trace, 0)
+      assert initial.assignments["state"] == ~s("idle")
+      assert initial.assignments["counter"] == "0"
+
+      step2 = Enum.at(trace, 1)
+      assert step2.assignments["state"] == ~s("running")
+      assert step2.assignments["counter"] == "1"
+    end
+
+    test "parses single bare assignment" do
+      output = """
+      Error: Invariant Bad is violated.
+
+      Error: The behavior up to this point is:
+
+      State 1: <Initial predicate>
+      x = 42
+
+      1 states generated, 1 distinct states found, 0 states left on queue.
+      """
+
+      {:error, violation, _stats} = TLCParser.parse(output)
+      assert length(violation.trace) == 1
+      assert Enum.at(violation.trace, 0).assignments["x"] == "42"
+    end
+  end
+
+  # -- Named temporal property --
+
+  describe "named temporal property" do
+    test "parses named temporal property violation" do
+      output = """
+      Error: Temporal property EventualResponse is violated.
+
+      Error: The following behavior constitutes a counter-example:
+
+      State 1: <Initial predicate>
+      /\\ state = "idle"
+
+      State 2: Stuttering
+
+      10 states generated, 5 distinct states found, 0 states left on queue.
+      """
+
+      {:error, violation, _stats} = TLCParser.parse(output)
+      assert violation.kind == :temporal
+      assert violation.property == "EventualResponse"
+    end
+  end
+
   # -- Edge cases --
 
   describe "edge cases" do

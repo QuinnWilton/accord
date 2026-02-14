@@ -9,7 +9,7 @@ defmodule Accord.TLA.TLCParser do
 
   @type state_entry :: %{
           number: pos_integer(),
-          action: String.t() | nil,
+          action: String.t() | :stuttering | nil,
           assignments: %{String.t() => String.t()}
         }
 
@@ -56,6 +56,10 @@ defmodule Accord.TLA.TLCParser do
         trace = parse_trace(lines)
         {:error, %{kind: :deadlock, property: nil, message: nil, trace: trace}, stats}
 
+      {:temporal, property} ->
+        trace = parse_trace(lines)
+        {:error, %{kind: :temporal, property: property, message: nil, trace: trace}, stats}
+
       :temporal ->
         trace = parse_trace(lines)
         {:error, %{kind: :temporal, property: nil, message: nil, trace: trace}, stats}
@@ -81,6 +85,9 @@ defmodule Accord.TLA.TLCParser do
 
         String.contains?(line, "Error: Deadlock reached.") ->
           {:halt, :deadlock}
+
+        match = Regex.run(~r/^Error: Temporal property (.+) is violated/, line) ->
+          {:halt, {:temporal, Enum.at(match, 1)}}
 
         String.contains?(line, "Error: Temporal properties were violated.") ->
           {:halt, :temporal}
@@ -153,8 +160,12 @@ defmodule Accord.TLA.TLCParser do
           trimmed == "" and current != [] ->
             {[Enum.reverse(current) | blocks], []}
 
-          # Assignment lines or continuation.
+          # Assignment lines with /\ prefix.
           String.starts_with?(trimmed, "/\\") ->
+            {blocks, [trimmed | current]}
+
+          # Bare assignment lines (no /\ prefix) inside a state block.
+          current != [] and Regex.match?(~r/^\w+\s*=\s*.+$/, trimmed) ->
             {blocks, [trimmed | current]}
 
           # Skip other lines.
@@ -208,6 +219,16 @@ defmodule Accord.TLA.TLCParser do
         [_, n, action] = result
         {String.to_integer(n), action}
 
+      # "State N: Stuttering"
+      result = Regex.run(~r/^State (\d+): Stuttering/, header) ->
+        [_, n] = result
+        {String.to_integer(n), :stuttering}
+
+      # "Back to state N: Stuttering"
+      result = Regex.run(~r/^Back to state (\d+): Stuttering/, header) ->
+        [_, n] = result
+        {String.to_integer(n), :stuttering}
+
       true ->
         {0, nil}
     end
@@ -219,8 +240,15 @@ defmodule Accord.TLA.TLCParser do
       trimmed = String.trim(line)
 
       case Regex.run(~r|^/\\\s+(\w+)\s*=\s*(.+)$|, trimmed) do
-        [_, var, value] -> Map.put(acc, var, String.trim(value))
-        _ -> acc
+        [_, var, value] ->
+          Map.put(acc, var, String.trim(value))
+
+        _ ->
+          # Bare assignment without /\ prefix.
+          case Regex.run(~r|^(\w+)\s*=\s*(.+)$|, trimmed) do
+            [_, var, value] -> Map.put(acc, var, String.trim(value))
+            _ -> acc
+          end
       end
     end)
   end
