@@ -44,7 +44,7 @@ defmodule Accord.Pass.TLA.Emit do
           render_tla_section("Init predicate", ss.init),
           render_tla_actions(actions),
           render_tla_next(actions),
-          render_tla_spec(actions),
+          render_tla_spec(actions, properties),
           render_tla_properties(properties),
           render_tla_state_constraint(ss),
           "===="
@@ -119,11 +119,30 @@ defmodule Accord.Pass.TLA.Emit do
     end
   end
 
-  defp render_tla_spec(_actions) do
-    """
+  defp render_tla_spec(_actions, properties) do
+    fair? = has_liveness?(properties)
+
+    base = """
     \\* Specification
     Spec == Init /\\ [][Next]_vars
     """
+
+    if fair? do
+      base <>
+        """
+
+        \\* Fair specification (required for liveness properties)
+        FairSpec == Spec /\\ WF_vars(Next)
+        """
+    else
+      base
+    end
+  end
+
+  defp has_liveness?(properties) do
+    Enum.any?(properties, fn prop ->
+      prop.kind == :temporal and String.contains?(prop.formula, "~>")
+    end)
   end
 
   defp render_tla_properties(properties) do
@@ -151,8 +170,10 @@ defmodule Accord.Pass.TLA.Emit do
   # -- CFG File --
 
   defp render_cfg(ss, _actions, properties) do
+    spec_name = if has_liveness?(properties), do: "FairSpec", else: "Spec"
+
     sections = [
-      "SPECIFICATION Spec",
+      "SPECIFICATION #{spec_name}",
       "",
       "INVARIANT TypeInvariant"
     ]

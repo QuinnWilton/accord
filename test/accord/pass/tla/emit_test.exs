@@ -188,6 +188,39 @@ defmodule Accord.Pass.TLA.EmitTest do
     end
   end
 
+  describe "fairness" do
+    test "emits FairSpec when liveness properties exist" do
+      prop = %Property{
+        name: "EventuallyDone",
+        kind: :temporal,
+        formula: ~s(EventuallyDone == state = "ready" ~> state = "done"),
+        comment: "liveness: eventually_done"
+      }
+
+      {:ok, %{tla: tla, cfg: cfg}} =
+        Emit.run(minimal_state_space(), [sample_action()], [prop])
+
+      assert tla =~ "FairSpec == Spec /\\ WF_vars(Next)"
+      assert cfg =~ "SPECIFICATION FairSpec"
+      refute cfg =~ "SPECIFICATION Spec\n"
+    end
+
+    test "no FairSpec for action properties (temporal but not liveness)" do
+      prop = %Property{
+        name: "Monotonic",
+        kind: :temporal,
+        formula: "Monotonic == [][counter' >= counter]_<<counter>>",
+        comment: nil
+      }
+
+      {:ok, %{tla: tla, cfg: cfg}} =
+        Emit.run(minimal_state_space(), [sample_action()], [prop])
+
+      refute tla =~ "FairSpec"
+      assert cfg =~ "SPECIFICATION Spec"
+    end
+  end
+
   describe "properties in TLA+" do
     test "renders property formulas" do
       prop = %Property{
