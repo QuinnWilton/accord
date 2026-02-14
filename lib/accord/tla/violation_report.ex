@@ -31,16 +31,57 @@ defmodule Accord.TLA.ViolationReport do
       ensure_exports!(protocol_mod)
     end
 
+    # Enrich unnamed temporal violations with the inferred property name.
+    violation = maybe_infer_temporal_property(violation, protocol_mod)
+
     report =
       build_report(violation)
       |> add_source_label(violation, protocol_mod, opts)
       |> add_trace_labels(violation, protocol_mod, opts)
       |> add_trace_notes(violation)
+      |> add_check_kind_hint(violation, protocol_mod)
       |> add_type_invariant_hint(violation, protocol_mod)
       |> add_deadlock_hint(violation, protocol_mod)
       |> add_action_property_hint(violation)
 
     render(report, protocol_mod)
+  end
+
+  # -- Temporal Property Inference --
+
+  # When TLC reports "Temporal properties were violated." (plural, unnamed),
+  # try to infer the specific property by scanning the IR for liveness checks.
+  # If there's exactly one temporal property with ~> (liveness), use its name.
+  defp maybe_infer_temporal_property(
+         %{kind: :temporal, property: nil} = violation,
+         mod
+       ) do
+    case infer_temporal_property(mod) do
+      nil -> violation
+      name -> %{violation | property: name}
+    end
+  end
+
+  defp maybe_infer_temporal_property(violation, _mod), do: violation
+
+  defp infer_temporal_property(mod) do
+    case fetch_ir(mod) do
+      nil ->
+        nil
+
+      ir ->
+        liveness_names =
+          Enum.flat_map(ir.properties, fn prop ->
+            prop.checks
+            |> Enum.filter(&(&1.kind == :liveness))
+            |> Enum.map(fn _check -> camelize(prop.name) end)
+          end)
+
+        case liveness_names do
+          [single] -> single
+          _ -> nil
+        end
+    end
   end
 
   # -- Report Building --
@@ -55,6 +96,10 @@ defmodule Accord.TLA.ViolationReport do
 
   defp build_report(%{kind: :deadlock}) do
     Report.error("deadlock reached")
+  end
+
+  defp build_report(%{kind: :temporal, property: property}) when is_binary(property) do
+    Report.error("temporal property #{property} violated")
   end
 
   defp build_report(%{kind: :temporal}) do
@@ -226,28 +271,130 @@ defmodule Accord.TLA.ViolationReport do
   end
 
   # Add compact trace steps as notes.
+  # Handles stuttering states and back-to-state loop markers in liveness traces.
   defp add_trace_notes(report, %{trace: trace}) do
-    Enum.reduce(trace, report, fn entry, acc ->
-      action_label =
-        case entry.action do
-          nil -> "Initial"
-          name -> name
-        end
+    {report, _} =
+      Enum.reduce(trace, {report, 0}, fn entry, {acc, prev_number} ->
+        note = format_trace_note(entry, prev_number)
+        {Report.with_note(acc, note), entry.number}
+      end)
 
-      assignments =
-        entry.assignments
-        |> Enum.sort()
-        |> Enum.map_join(", ", fn {k, v} -> "#{k}=#{v}" end)
+    report
+  end
 
-      note =
-        if assignments == "" do
-          "step #{entry.number}: #{action_label}"
-        else
-          "step #{entry.number}: #{action_label} -> #{assignments}"
-        end
+  defp format_trace_note(%{action: :stuttering} = entry, _prev_number) do
+    "step #{entry.number}: stuttering (system idles indefinitely)"
+  end
 
-      Report.with_note(acc, note)
-    end)
+  defp format_trace_note(entry, prev_number) when entry.number <= prev_number do
+    action_label = entry.action || "Initial"
+    "back to step #{entry.number}: #{action_label} (cycle repeats from here)"
+  end
+
+  defp format_trace_note(entry, _prev_number) do
+    action_label =
+      case entry.action do
+        nil -> "Initial"
+        name -> name
+      end
+
+    assignments =
+      entry.assignments
+      |> Enum.sort()
+      |> Enum.map_join(", ", fn {k, v} -> "#{k}=#{v}" end)
+
+    if assignments == "" do
+      "step #{entry.number}: #{action_label}"
+    else
+      "step #{entry.number}: #{action_label} -> #{assignments}"
+    end
+  end
+
+  # -- Check-Kind-Aware Hints --
+
+  # Resolve the TLA+ property name back to the IR check kind and add
+  # context-specific notes and remediation guidance.
+  defp add_check_kind_hint(report, %{property: property}, mod)
+       when is_binary(property) and property != "TypeInvariant" do
+    case resolve_check_kind(mod, property) do
+      :correspondence ->
+        report
+        |> Report.with_note(
+          "more close events than open events — a close transition fired without a prior open"
+        )
+        |> Report.with_help(
+          "ensure every path to a close transition passes through the corresponding open transition first"
+        )
+
+      :bounded ->
+        report
+        |> Report.with_note("a tracked value exceeded its declared bound")
+        |> Report.with_help(
+          "review transitions that increase the tracked value, or increase the bound"
+        )
+
+      :forbidden ->
+        report
+        |> Report.with_note("the protocol can reach a state matching a forbidden condition")
+        |> Report.with_help(
+          "add guards or state constraints to prevent reaching the forbidden condition"
+        )
+
+      :local_invariant ->
+        report
+        |> Report.with_note("a state-specific invariant was violated upon entering the state")
+        |> Report.with_help("ensure all transitions into the state set the required track values")
+
+      :liveness ->
+        report
+        |> Report.with_note("the system can loop indefinitely without reaching the target state")
+        |> Report.with_help(
+          "ensure there is a reachable path from the trigger to the target, not blocked by guards or domain limits"
+        )
+
+      _ ->
+        report
+    end
+  end
+
+  defp add_check_kind_hint(report, _violation, _mod), do: report
+
+  # Maps a TLA+ property name (CamelCase) back to the IR check kind by
+  # scanning the protocol's IR properties and matching against the
+  # camelized property + check name pattern used by BuildProperties.
+  defp resolve_check_kind(mod, tla_property_name) do
+    case fetch_ir(mod) do
+      nil ->
+        nil
+
+      ir ->
+        Enum.find_value(ir.properties, fn prop ->
+          Enum.find_value(prop.checks, fn check ->
+            tla_name = build_tla_name(prop.name, check)
+
+            if tla_name == tla_property_name do
+              check.kind
+            end
+          end)
+        end)
+    end
+  end
+
+  # Reproduces the naming logic from BuildProperties.camelize.
+  defp build_tla_name(prop_name, %{kind: :local_invariant} = check) do
+    camelize(prop_name) <> camelize(check.spec.state)
+  end
+
+  defp build_tla_name(prop_name, _check) do
+    camelize(prop_name)
+  end
+
+  defp camelize(name) when is_atom(name) do
+    name
+    |> Atom.to_string()
+    |> String.split("_")
+    |> Enum.map(&String.capitalize/1)
+    |> Enum.join()
   end
 
   # -- TypeInvariant Overflow Detection --
