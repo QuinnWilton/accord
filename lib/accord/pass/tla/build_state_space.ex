@@ -58,7 +58,15 @@ defmodule Accord.Pass.TLA.BuildStateSpace do
 
     correspondence_vars =
       Enum.map(correspondences, fn corr ->
-        %{name: corr.counter_var, type: "0..3", init: "0"}
+        domain =
+          ModelConfig.resolve_domain(
+            config,
+            String.to_atom(corr.counter_var),
+            :correspondence_counter
+          )
+
+        type_str = ModelConfig.domain_to_tla(domain)
+        %{name: corr.counter_var, type: type_str, init: "0"}
       end)
 
     variables = [state_var] ++ track_vars ++ event_var ++ correspondence_vars

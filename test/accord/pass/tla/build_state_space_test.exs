@@ -255,6 +255,46 @@ defmodule Accord.Pass.TLA.BuildStateSpaceTest do
       assert counter_var
       assert counter_var.init == "0"
     end
+
+    test "counter var uses default correspondence_counter domain from ModelConfig" do
+      ir = %{
+        minimal_ir()
+        | properties: [
+            %Property{
+              name: :open_close,
+              checks: [
+                %Check{kind: :correspondence, spec: %{open: :open, close: [:close]}}
+              ]
+            }
+          ]
+      }
+
+      {:ok, ss} = BuildStateSpace.run(ir, default_config())
+      counter_var = Enum.find(ss.variables, &(&1.name == "open_pending"))
+
+      # Default correspondence_counter domain is -1..3.
+      assert counter_var.type == "-1..3"
+    end
+
+    test "counter var domain can be overridden per-counter in ModelConfig" do
+      ir = %{
+        minimal_ir()
+        | properties: [
+            %Property{
+              name: :open_close,
+              checks: [
+                %Check{kind: :correspondence, spec: %{open: :open, close: [:close]}}
+              ]
+            }
+          ]
+      }
+
+      config = %ModelConfig{domains: %{open_pending: -1..10}}
+      {:ok, ss} = BuildStateSpace.run(ir, config)
+      counter_var = Enum.find(ss.variables, &(&1.name == "open_pending"))
+
+      assert counter_var.type == "-1..10"
+    end
   end
 
   describe "TypeInvariant and Init" do

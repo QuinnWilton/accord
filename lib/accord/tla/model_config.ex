@@ -58,7 +58,8 @@ defmodule Accord.TLA.ModelConfig do
     atom: {:model_values, 3},
     term: {:model_values, 3},
     binary: {:model_values, 2},
-    string: {:model_values, 2}
+    string: {:model_values, 2},
+    correspondence_counter: -1..3
   }
 
   @doc """
