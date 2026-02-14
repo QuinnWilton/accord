@@ -88,9 +88,18 @@ defmodule Accord.TLA.ViolationReport do
         source_file = source_file(mod)
 
         if source_file do
+          block_span = find_property_block_span(mod, span)
+
+          label =
+            if block_span do
+              Label.bracket(block_span, "property defined here")
+            else
+              Label.primary(span, "property defined here")
+            end
+
           report
           |> Report.with_source(source_file)
-          |> Report.with_label(Label.primary(span, "property defined here"))
+          |> Report.with_label(label)
         else
           report
         end
@@ -98,7 +107,8 @@ defmodule Accord.TLA.ViolationReport do
   end
 
   # Attach a secondary label at the action span for the last trace step
-  # (the violating step).
+  # (the violating step). Block-form transitions get a bracket label
+  # covering the full `on ... do ... end` range.
   defp add_trace_labels(report, %{trace: trace}, mod, opts) do
     strict? = Keyword.get(opts, :strict, false)
     last = List.last(trace)
@@ -113,11 +123,23 @@ defmodule Accord.TLA.ViolationReport do
             source_file = source_file(mod)
 
             if source_file do
-              span = widen_transition_span(span, source_file)
+              block_span = find_block_span(mod, span)
+
+              label =
+                if block_span do
+                  Label.new(block_span,
+                    message: "violation occurs within this transition",
+                    priority: :secondary,
+                    style: :bracket
+                  )
+                else
+                  widened = widen_transition_span(span, source_file)
+                  Label.secondary(widened, "violation occurs here")
+                end
 
               report
               |> Report.with_source(source_file)
-              |> Report.with_label(Label.secondary(span, "violation occurs here"))
+              |> Report.with_label(label)
             else
               report
             end
@@ -511,6 +533,35 @@ defmodule Accord.TLA.ViolationReport do
       mod.__ir__().source_file
     else
       nil
+    end
+  end
+
+  # Finds the block_span for a property by matching its span against the IR.
+  defp find_property_block_span(mod, span) do
+    case fetch_ir(mod) do
+      nil ->
+        nil
+
+      ir ->
+        Enum.find_value(ir.properties, fn p ->
+          if p.span == span, do: p.block_span
+        end)
+    end
+  end
+
+  # Finds the block_span for a transition by matching its span against the IR.
+  defp find_block_span(mod, span) do
+    case fetch_ir(mod) do
+      nil ->
+        nil
+
+      ir ->
+        all_transitions =
+          Enum.flat_map(ir.states, fn {_name, state} -> state.transitions end) ++ ir.anystate
+
+        Enum.find_value(all_transitions, fn t ->
+          if t.span == span, do: t.block_span
+        end)
     end
   end
 

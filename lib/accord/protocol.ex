@@ -261,6 +261,16 @@ defmodule Accord.Protocol do
     escaped_arg_spans = Macro.escape(message_arg_spans)
     span = message_span_ast(message_spec, __CALLER__)
 
+    # Compute the block span covering the full `on ... do ... end` range.
+    # Reads the source file to find the matching `end` keyword.
+    caller_line = __CALLER__.line
+    block_end_line = find_block_end_line(__CALLER__.file, caller_line)
+
+    block_span =
+      quote do
+        Pentiment.Span.Position.new(unquote(caller_line), 1, unquote(block_end_line), 1)
+      end
+
     quote do
       import Accord.Protocol.Block
 
@@ -317,7 +327,8 @@ defmodule Accord.Protocol do
         branches: branches,
         guard: guard_pair,
         update: update_pair,
-        span: unquote(span)
+        span: unquote(span),
+        block_span: unquote(block_span)
       }
 
       if in_anystate do
@@ -502,6 +513,14 @@ defmodule Accord.Protocol do
   defmacro property(name, do: block) do
     span = span_from_name_ast(name, __CALLER__)
 
+    caller_line = __CALLER__.line
+    block_end_line = find_block_end_line(__CALLER__.file, caller_line)
+
+    block_span =
+      quote do
+        Pentiment.Span.Position.new(unquote(caller_line), 1, unquote(block_end_line), 1)
+      end
+
     quote do
       import Accord.Protocol.Property
 
@@ -518,7 +537,8 @@ defmodule Accord.Protocol do
         %Accord.IR.Property{
           name: unquote(name),
           checks: checks,
-          span: unquote(span)
+          span: unquote(span),
+          block_span: unquote(block_span)
         }
       )
 
@@ -633,8 +653,8 @@ defmodule Accord.Protocol do
   end
 
   defp build_compiled(ir) do
-    {:ok, table} = Accord.Pass.BuildTransitionTable.run(ir)
-    {:ok, track_init} = Accord.Pass.BuildTrackInit.run(ir)
+    {:ok, table} = Accord.Pass.Monitor.BuildTransitionTable.run(ir)
+    {:ok, track_init} = Accord.Pass.Monitor.BuildTrackInit.run(ir)
 
     %Accord.Monitor.Compiled{
       ir: ir,
@@ -980,6 +1000,47 @@ defmodule Accord.Protocol do
   defp parse_track_type(:boolean), do: :boolean
   defp parse_track_type(:term), do: :term
   defp parse_track_type(:map), do: :map
+
+  # -- Block Span Helpers --
+
+  # Finds the line of the `end` keyword that closes a `do ... end` block.
+  # Reads the source file and scans forward from the macro call line,
+  # matching the `end` at the same indentation level as the opening line.
+  @doc false
+  def find_block_end_line(file, start_line) do
+    case File.read(file) do
+      {:ok, content} ->
+        lines = String.split(content, "\n")
+        on_line = Enum.at(lines, start_line - 1) || ""
+        indent = byte_size(on_line) - byte_size(String.trim_leading(on_line))
+
+        lines
+        |> Enum.drop(start_line)
+        |> Enum.with_index(start_line + 1)
+        |> Enum.reduce_while({1, start_line}, fn {line, line_num}, {depth, _} ->
+          trimmed = String.trim(line)
+          line_indent = byte_size(line) - byte_size(String.trim_leading(line))
+
+          cond do
+            trimmed == "end" and line_indent == indent and depth == 1 ->
+              {:halt, {0, line_num}}
+
+            trimmed == "end" and line_indent <= indent ->
+              {:cont, {depth - 1, line_num}}
+
+            String.ends_with?(trimmed, "do") and line_indent >= indent ->
+              {:cont, {depth + 1, line_num}}
+
+            true ->
+              {:cont, {depth, line_num}}
+          end
+        end)
+        |> elem(1)
+
+      {:error, _} ->
+        start_line
+    end
+  end
 
   # -- Span Helpers --
 

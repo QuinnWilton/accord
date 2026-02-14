@@ -190,46 +190,70 @@ defmodule Accord.Violation.Report do
 
       path ->
         report = Report.with_source(report, path)
-        span = violation.span || lookup_transition_span(violation, compiled)
         strict? = Keyword.get(opts, :strict, false)
 
-        cond do
-          span != nil and strict? ->
-            SpanValidation.validate_span!(span, "#{violation.kind} in state :#{violation.state}")
+        case resolve_label(violation, compiled) do
+          {:ok, label} ->
+            if strict? do
+              span = label.span
 
-            Report.with_label(
-              report,
-              Label.primary(span, label_message(violation.kind, violation.context))
-            )
+              SpanValidation.validate_span!(
+                span,
+                "#{violation.kind} in state :#{violation.state}"
+              )
+            end
 
-          span != nil ->
-            Report.with_label(
-              report,
-              Label.primary(span, label_message(violation.kind, violation.context))
-            )
+            Report.with_label(report, label)
 
-          strict? and violation.kind in @spannable_kinds ->
-            raise ArgumentError,
-                  "missing span for #{violation.kind} in state :#{violation.state}"
+          :none ->
+            if strict? and violation.kind in @spannable_kinds do
+              raise ArgumentError,
+                    "missing span for #{violation.kind} in state :#{violation.state}"
+            end
 
-          true ->
             report
         end
     end
   end
 
-  defp lookup_transition_span(%Violation{} = violation, %Compiled{} = compiled) do
-    case TransitionTable.lookup(compiled.transition_table, violation.state, violation.message) do
-      {:ok, transition} -> span_for_violation(violation.kind, violation, transition)
-      :error -> nil
+  # Resolves the violation to a Label. When the violation has a direct span,
+  # use it inline. Otherwise look up the transition and decide between
+  # bracket (block-form) and inline (keyword-form or specific sub-span).
+  defp resolve_label(%Violation{span: span} = violation, _compiled) when not is_nil(span) do
+    {:ok, Label.primary(span, label_message(violation.kind, violation.context))}
+  end
+
+  defp resolve_label(%Violation{} = violation, %Compiled{} = compiled) do
+    case lookup_transition(violation, compiled) do
+      {:ok, transition} ->
+        {span, hint} = span_for_violation(violation.kind, violation, transition)
+
+        label =
+          case {hint, transition.block_span} do
+            {:block, block_span} when not is_nil(block_span) ->
+              Label.bracket(block_span, "violation occurs within this transition")
+
+            _ ->
+              message = label_message(violation.kind, violation.context)
+              Label.primary(span, message)
+          end
+
+        if span, do: {:ok, label}, else: :none
+
+      :error ->
+        :none
     end
+  end
+
+  defp lookup_transition(%Violation{} = violation, %Compiled{} = compiled) do
+    TransitionTable.lookup(compiled.transition_table, violation.state, violation.message)
   end
 
   # Guard failures point at the guard keyword, not the transition.
   defp span_for_violation(:guard_failed, _violation, transition) do
     case transition.guard do
-      %{span: span} when not is_nil(span) -> span
-      _ -> transition.span
+      %{span: span} when not is_nil(span) -> {span, :inline}
+      _ -> {transition.span, :block}
     end
   end
 
@@ -238,21 +262,24 @@ defmodule Accord.Violation.Report do
     pos = violation.context[:position]
 
     if is_integer(pos) and pos >= 0 do
-      Enum.at(transition.message_arg_spans, pos) || transition.span
+      case Enum.at(transition.message_arg_spans, pos) do
+        nil -> {transition.span, :block}
+        span -> {span, :inline}
+      end
     else
-      transition.span
+      {transition.span, :block}
     end
   end
 
   # Invalid reply violations point at the reply declaration, not the message tag.
   defp span_for_violation(:invalid_reply, _violation, transition) do
     case transition.branches do
-      [%{span: span} | _] when not is_nil(span) -> span
-      _ -> transition.span
+      [%{span: span} | _] when not is_nil(span) -> {span, :inline}
+      _ -> {transition.span, :block}
     end
   end
 
-  defp span_for_violation(_kind, _violation, transition), do: transition.span
+  defp span_for_violation(_kind, _violation, transition), do: {transition.span, :block}
 
   defp label_message(:invariant_violated, %{check_kind: :bounded}),
     do: "bounded check defined here"

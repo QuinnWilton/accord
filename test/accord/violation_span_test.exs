@@ -238,4 +238,101 @@ defmodule Accord.ViolationSpanTest do
       assert :error = TransitionTable.lookup(compiled.transition_table, :stopped, :ping)
     end
   end
+
+  # -- Block span --
+  # Block-form transitions capture a block_span covering the full do...end.
+
+  describe "block_span" do
+    test "block-form transitions have a Position block_span" do
+      compiled = Accord.Test.Lock.Protocol.__compiled__()
+
+      # Lock :acquire (lines 18–28) is a block-form transition.
+      {:ok, transition} =
+        TransitionTable.lookup(compiled.transition_table, :unlocked, {:acquire, :c1})
+
+      assert %Pentiment.Span.Position{} = transition.block_span
+      assert transition.block_span.start_line == 18
+      assert transition.block_span.end_line == 28
+    end
+
+    test "blackjack :bet block-form has a Position block_span" do
+      compiled = Accord.Test.Blackjack.Protocol.__compiled__()
+
+      {:ok, transition} =
+        TransitionTable.lookup(compiled.transition_table, :waiting, {:bet, 100})
+
+      assert %Pentiment.Span.Position{} = transition.block_span
+      assert transition.block_span.start_line == 17
+      assert transition.block_span.end_line == 21
+    end
+
+    test "keyword-form transitions have nil block_span" do
+      compiled = Accord.Test.Counter.Protocol.__compiled__()
+
+      {:ok, transition} =
+        TransitionTable.lookup(compiled.transition_table, :ready, {:increment, 1})
+
+      assert transition.block_span == nil
+    end
+  end
+
+  # -- Bracket label rendering --
+  # When a violation resolves to transition.span and block_span is set,
+  # the report uses a bracket label covering the full block.
+
+  describe "bracket label rendering" do
+    test "timeout violation uses bracket label for block-form transition" do
+      compiled = Accord.Test.Lock.Protocol.__compiled__()
+
+      # Build a :timeout violation that resolves to the catch-all span.
+      violation = %Accord.Violation{
+        kind: :timeout,
+        state: :unlocked,
+        message: {:acquire, :c1},
+        reply: nil,
+        blame: :server,
+        expected: nil,
+        context: %{timeout_ms: 5000}
+      }
+
+      formatted = Accord.Violation.Report.format(violation, compiled)
+
+      # Bracket closing tail should appear in the output.
+      assert formatted =~ "╰── violation occurs within this transition"
+    end
+
+    test "guard_failed stays inline (does not use bracket)" do
+      compiled = Accord.Test.Blackjack.Protocol.__compiled__()
+      {:ok, server} = Accord.Test.Blackjack.Server.start_link()
+
+      {:ok, monitor} =
+        Monitor.start_link(compiled, upstream: server, violation_policy: :log)
+
+      assert {:accord_violation, violation} = Monitor.call(monitor, {:bet, 9999})
+
+      formatted = Accord.Violation.Report.format(violation, compiled)
+
+      # Guard failures resolve to the guard keyword span (inline), not bracket.
+      # Inline labels have a ┬ tee on the underline; brackets do not.
+      assert formatted =~ "guarded transition defined here"
+      assert formatted =~ "┬"
+    end
+
+    test "invalid_reply stays inline (does not use bracket)" do
+      compiled = Accord.Test.Lock.Protocol.__compiled__()
+      {:ok, faulty} = Accord.Test.FaultyServer.start_link(Accord.Test.Lock.Server)
+      Accord.Test.FaultyServer.inject_fault(faulty, :wrong_reply_type)
+
+      {:ok, monitor} =
+        Monitor.start_link(compiled, upstream: faulty, violation_policy: :log)
+
+      assert {:accord_violation, violation} = Monitor.call(monitor, {:acquire, :c1})
+
+      formatted = Accord.Violation.Report.format(violation, compiled)
+
+      # Invalid reply resolves to branch span (inline), not bracket.
+      assert formatted =~ "reply type defined here"
+      assert formatted =~ "┬"
+    end
+  end
 end
