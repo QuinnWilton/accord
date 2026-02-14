@@ -1,4 +1,4 @@
-defmodule Accord.Pass.BuildTrackInit do
+defmodule Accord.Pass.Monitor.BuildTrackInit do
   @moduledoc """
   Produces initial track state from track declarations.
   """

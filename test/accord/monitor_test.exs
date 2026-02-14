@@ -5,7 +5,7 @@ defmodule Accord.MonitorTest do
   alias Accord.IR.{Branch, State, Transition}
   alias Accord.Monitor
   alias Accord.Monitor.Compiled
-  alias Accord.Pass.{BuildTransitionTable, BuildTrackInit}
+  alias Accord.Pass.Monitor.{BuildTrackInit, BuildTransitionTable}
 
   @moduletag :capture_log
 

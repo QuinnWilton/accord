@@ -1,10 +1,10 @@
-defmodule Accord.Pass.BuildTransitionTableTest do
+defmodule Accord.Pass.Monitor.BuildTransitionTableTest do
   use ExUnit.Case, async: true
 
   alias Accord.IR
   alias Accord.IR.{Branch, State, Transition}
   alias Accord.Monitor.TransitionTable
-  alias Accord.Pass.BuildTransitionTable
+  alias Accord.Pass.Monitor.BuildTransitionTable
 
   defp sample_ir do
     %IR{

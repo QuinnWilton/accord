@@ -1,4 +1,4 @@
-defmodule Accord.Pass.BuildTransitionTable do
+defmodule Accord.Pass.Monitor.BuildTransitionTable do
   @moduledoc """
   Flattens validated IR into a runtime transition table.
 
