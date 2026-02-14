@@ -115,7 +115,7 @@ defmodule Accord.ProtocolTest do
   end
 
   defmodule BranchingProtocol do
-    use Accord.Protocol
+    use Accord.Protocol, model: "test/support/branching_protocol_model.exs"
 
     initial :waiting
 
