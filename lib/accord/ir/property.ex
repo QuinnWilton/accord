@@ -9,9 +9,10 @@ defmodule Accord.IR.Property do
   @type t :: %__MODULE__{
           name: atom(),
           checks: [Accord.IR.Check.t()],
-          span: Pentiment.Span.t() | nil
+          span: Pentiment.Span.t() | nil,
+          block_span: Pentiment.Span.t() | nil
         }
 
   @enforce_keys [:name]
-  defstruct [:name, :span, checks: []]
+  defstruct [:name, :span, :block_span, checks: []]
 end

@@ -20,7 +20,8 @@ defmodule Accord.IR.Transition do
           branches: [Accord.IR.Branch.t()],
           guard: guard_pair() | nil,
           update: guard_pair() | nil,
-          span: Pentiment.Span.t() | nil
+          span: Pentiment.Span.t() | nil,
+          block_span: Pentiment.Span.t() | nil
         }
 
   @enforce_keys [:message_pattern, :kind]
@@ -32,6 +33,7 @@ defmodule Accord.IR.Transition do
     :guard,
     :update,
     :span,
+    :block_span,
     message_types: [],
     message_arg_names: [],
     message_arg_spans: [],
