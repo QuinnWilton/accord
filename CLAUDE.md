@@ -13,6 +13,8 @@ Accord lets you declare a state machine protocol (states, transitions, message t
 
 ## Architecture
 
+For a thorough treatment of the two-pipeline design, blame assignment, closure lifting, pass ordering, error reporting, and module dependency rules, see [`docs/architecture.md`](docs/architecture.md).
+
 The IR (`Accord.IR`) is the single source of truth. Two pipelines flow from it:
 
 - **Downward (runtime)**: IR → transition table + track init → `Accord.Monitor` (gen_statem)
@@ -27,6 +29,7 @@ The IR (`Accord.IR`) is the single source of truth. Two pipelines flow from it:
 | `Accord.Monitor` | Runtime gen_statem proxy with blame assignment |
 | `Accord.Pass.*` | Validation passes (structure, types, determinism, reachability, properties, field paths, span refinement) |
 | `Accord.Pass.Helpers` | Shared helpers for validation passes |
+| `Accord.Pass.Monitor.*` | Monitor compilation passes (BuildTransitionTable, BuildTrackInit) |
 | `Accord.Pass.TLA.*` | TLA+ compilation passes (BuildStateSpace, BuildActions, BuildProperties, Emit) |
 | `Accord.TLA.Compiler` | Orchestrates TLA+ pass pipeline |
 | `Accord.TLA.TLCParser` | Parses TLC stdout into structured results |
