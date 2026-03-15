@@ -80,4 +80,48 @@ defmodule Accord.BoundaryTest do
       )
     end
   end
+
+  describe "synthesis isolation" do
+    test "IR does not depend on Synthesize", %{boundary: boundary} do
+      refute_calls(boundary,
+        from: under(Accord.IR),
+        to: under(Accord.Synthesize)
+      )
+    end
+
+    test "Pass does not depend on Synthesize", %{boundary: boundary} do
+      refute_calls(boundary,
+        from: under(Accord.Pass),
+        to: under(Accord.Synthesize)
+      )
+    end
+
+    test "Monitor does not depend on Synthesize", %{boundary: boundary} do
+      refute_calls(boundary,
+        from: under(Accord.Monitor),
+        to: under(Accord.Synthesize)
+      )
+    end
+
+    test "TLA modules do not depend on Synthesize", %{boundary: boundary} do
+      refute_calls(boundary,
+        from: under(Accord.TLA),
+        to: under(Accord.Synthesize)
+      )
+    end
+
+    test "Protocol does not depend on Synthesize", %{boundary: boundary} do
+      refute_calls(boundary,
+        from: [Accord.Protocol],
+        to: under(Accord.Synthesize)
+      )
+    end
+
+    test "Violation does not depend on Synthesize", %{boundary: boundary} do
+      refute_calls(boundary,
+        from: under(Accord.Violation),
+        to: under(Accord.Synthesize)
+      )
+    end
+  end
 end

@@ -138,6 +138,128 @@ defmodule Accord.MonitorTest do
     end
   end
 
+  describe "cast with goto" do
+    defp cast_goto_ir do
+      %IR{
+        name: Test.CastGotoProtocol,
+        initial: :idle,
+        states: %{
+          idle: %State{
+            name: :idle,
+            transitions: [
+              %Transition{
+                message_pattern: :start,
+                message_types: [],
+                kind: :call,
+                branches: [%Branch{reply_type: {:literal, :ok}, next_state: :running}]
+              }
+            ]
+          },
+          running: %State{
+            name: :running,
+            transitions: [
+              %Transition{
+                message_pattern: :pause,
+                message_types: [],
+                kind: :cast,
+                branches: [%Branch{reply_type: nil, next_state: :paused}]
+              },
+              %Transition{
+                message_pattern: :stop,
+                message_types: [],
+                kind: :call,
+                branches: [%Branch{reply_type: {:literal, :stopped}, next_state: :done}]
+              }
+            ]
+          },
+          paused: %State{
+            name: :paused,
+            transitions: [
+              %Transition{
+                message_pattern: :resume,
+                message_types: [],
+                kind: :cast,
+                branches: [%Branch{reply_type: nil, next_state: :running}]
+              },
+              %Transition{
+                message_pattern: :stop,
+                message_types: [],
+                kind: :call,
+                branches: [%Branch{reply_type: {:literal, :stopped}, next_state: :done}]
+              }
+            ]
+          },
+          done: %State{name: :done, terminal: true}
+        },
+        anystate: [
+          %Transition{
+            message_pattern: :heartbeat,
+            message_types: [],
+            kind: :cast,
+            branches: []
+          }
+        ]
+      }
+    end
+
+    setup do
+      compiled = compile_ir(cast_goto_ir())
+
+      {:ok, server} =
+        EchoServer.start_link(%{
+          start: :ok,
+          stop: :stopped
+        })
+
+      {:ok, monitor} = start_monitor(compiled, server)
+      %{monitor: monitor}
+    end
+
+    test "cast-with-goto transitions monitor state", %{monitor: monitor} do
+      assert :ok = Monitor.call(monitor, :start)
+      assert :ok = Monitor.cast(monitor, :pause)
+      :sys.get_state(monitor)
+
+      # Verify we're in :paused by calling :stop (valid in :paused).
+      assert :stopped = Monitor.call(monitor, :stop)
+    end
+
+    test "multiple cast-with-goto round-trips", %{monitor: monitor} do
+      assert :ok = Monitor.call(monitor, :start)
+
+      assert :ok = Monitor.cast(monitor, :pause)
+      :sys.get_state(monitor)
+
+      assert :ok = Monitor.cast(monitor, :resume)
+      :sys.get_state(monitor)
+
+      # Back in :running — :stop is valid.
+      assert :stopped = Monitor.call(monitor, :stop)
+    end
+
+    test "anystate cast does not change state", %{monitor: monitor} do
+      assert :ok = Monitor.call(monitor, :start)
+      assert :ok = Monitor.cast(monitor, :heartbeat)
+      :sys.get_state(monitor)
+
+      # Still in :running — :pause is valid.
+      assert :ok = Monitor.cast(monitor, :pause)
+      :sys.get_state(monitor)
+
+      # In :paused now.
+      assert :stopped = Monitor.call(monitor, :stop)
+    end
+
+    test "cast-with-goto tracks visited states", %{monitor: monitor} do
+      assert :ok = Monitor.call(monitor, :start)
+      assert :ok = Monitor.cast(monitor, :pause)
+      :sys.get_state(monitor)
+
+      {_state, data} = :sys.get_state(monitor)
+      assert MapSet.member?(data.visited_states, :paused)
+    end
+  end
+
   describe "client blame — :invalid_message" do
     setup do
       compiled = compile_ir(sample_ir())

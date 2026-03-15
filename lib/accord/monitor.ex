@@ -243,9 +243,18 @@ defmodule Accord.Monitor do
             # Type-check message arguments.
             case check_message_types(message, transition, state) do
               :ok ->
-                # Forward to upstream.
                 GenServer.cast(data.upstream, message)
-                {:keep_state, data}
+
+                case transition.branches do
+                  [] ->
+                    # No goto — stay in same state.
+                    {:keep_state, data}
+
+                  [%Branch{next_state: next_state}] ->
+                    # Cast with goto — transition state.
+                    actual_next = if next_state == :__same__, do: state, else: next_state
+                    apply_cast_transition(transition, message, actual_next, data)
+                end
 
               {:error, violation} ->
                 handle_cast_violation(violation, state, data)
@@ -259,6 +268,33 @@ defmodule Accord.Monitor do
           :error ->
             violation = Violation.invalid_message(state, message, valid_tags(table, state))
             handle_cast_violation(violation, state, data)
+        end
+    end
+  end
+
+  defp apply_cast_transition(transition, message, next_state, data) do
+    old_tracks = data.tracks
+    new_tracks = apply_update(transition.update, message, nil, data.tracks)
+
+    case check_properties(message, next_state, old_tracks, new_tracks, data) do
+      {:ok, updated_data} ->
+        updated_data = %{updated_data | tracks: new_tracks}
+        updated_data = track_visited_state(updated_data, next_state)
+        timer_actions = liveness_actions(updated_data, next_state)
+        {:next_state, next_state, updated_data, timer_actions}
+
+      {:violation, violation, updated_data} ->
+        updated_data = %{updated_data | tracks: new_tracks}
+        updated_data = track_visited_state(updated_data, next_state)
+
+        case data.violation_policy do
+          :crash ->
+            {:stop, {:protocol_violation, violation}, updated_data}
+
+          _ ->
+            log_violation(violation)
+            timer_actions = liveness_actions(updated_data, next_state)
+            {:next_state, next_state, updated_data, timer_actions}
         end
     end
   end

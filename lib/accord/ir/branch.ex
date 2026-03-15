@@ -7,7 +7,7 @@ defmodule Accord.IR.Branch do
   """
 
   @type t :: %__MODULE__{
-          reply_type: Accord.IR.Type.t(),
+          reply_type: Accord.IR.Type.t() | nil,
           next_state: atom(),
           constraint: %{fun: function(), ast: Macro.t()} | nil,
           span: Pentiment.Span.t() | nil,

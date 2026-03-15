@@ -617,6 +617,7 @@ defmodule Accord.Pass.TLA.BuildActions do
 
   defp camelize(s) when is_binary(s) do
     s
+    |> String.replace(~r/[^a-zA-Z0-9_]/, "")
     |> String.split("_")
     |> Enum.map(&String.capitalize/1)
     |> Enum.join()

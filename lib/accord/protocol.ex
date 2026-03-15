@@ -44,6 +44,12 @@ defmodule Accord.Protocol do
   Casts are async fire-and-forget messages with no reply:
 
       cast :heartbeat
+
+  Casts in state blocks may specify `goto:` to trigger a state transition:
+
+      state :running do
+        cast :pause, goto: :paused
+      end
   """
 
   alias Accord.IR
@@ -70,6 +76,7 @@ defmodule Accord.Protocol do
           anystate: 1,
           on: 2,
           cast: 1,
+          cast: 2,
           property: 2,
           in_state: 1
         ]
@@ -448,28 +455,90 @@ defmodule Accord.Protocol do
 
   @doc """
   Defines a cast (async fire-and-forget, no reply).
+
+  Casts in anystate blocks never change state. Casts in state blocks may
+  specify `goto:` to trigger a state transition.
+
+      # Anystate cast — stays in current state.
+      anystate do
+        cast :heartbeat
+      end
+
+      # State cast with goto — transitions state.
+      state :running do
+        cast :pause, goto: :paused
+      end
   """
-  defmacro cast(message_spec) do
-    {message_pattern, message_types, _message_arg_names, _message_arg_spans} =
+  defmacro cast(message_spec, opts \\ []) do
+    {message_pattern, message_types, message_arg_names, message_arg_spans} =
       parse_message_spec(message_spec)
 
     escaped_types = Macro.escape(message_types)
+    escaped_arg_names = Macro.escape(message_arg_names)
+    escaped_arg_spans = Macro.escape(message_arg_spans)
+    next_state = Keyword.get(opts, :goto)
+    has_goto = next_state != nil
+    caller_file = __CALLER__.file
+    caller_line = __CALLER__.line
     span = message_span_ast(message_spec, __CALLER__)
+
+    next_state_pattern = if next_state, do: inspect(next_state)
 
     quote do
       in_anystate = Module.get_attribute(__MODULE__, :accord_in_anystate, false)
 
-      transition = %Transition{
-        message_pattern: unquote(message_pattern),
-        message_types: unquote(escaped_types),
-        kind: :cast,
-        branches: [],
-        span: unquote(span)
-      }
-
       if in_anystate do
+        if unquote(has_goto) do
+          raise CompileError,
+            description: "anystate casts cannot specify goto:",
+            file: unquote(caller_file),
+            line: unquote(caller_line)
+        end
+
+        transition = %Transition{
+          message_pattern: unquote(message_pattern),
+          message_types: unquote(escaped_types),
+          message_arg_names: unquote(escaped_arg_names),
+          message_arg_spans: unquote(escaped_arg_spans),
+          kind: :cast,
+          branches: [],
+          span: unquote(span)
+        }
+
         Module.put_attribute(__MODULE__, :accord_anystate, transition)
       else
+        branches =
+          if unquote(has_goto) do
+            next_state_span =
+              if unquote(next_state_pattern) do
+                Pentiment.Span.search(
+                  line: unquote(caller_line),
+                  pattern: unquote(next_state_pattern)
+                )
+              end
+
+            [
+              %Branch{
+                reply_type: nil,
+                next_state: unquote(next_state),
+                next_state_span: next_state_span,
+                span: unquote(span)
+              }
+            ]
+          else
+            []
+          end
+
+        transition = %Transition{
+          message_pattern: unquote(message_pattern),
+          message_types: unquote(escaped_types),
+          message_arg_names: unquote(escaped_arg_names),
+          message_arg_spans: unquote(escaped_arg_spans),
+          kind: :cast,
+          branches: branches,
+          span: unquote(span)
+        }
+
         current = Module.get_attribute(__MODULE__, :accord_current_transitions)
         Module.put_attribute(__MODULE__, :accord_current_transitions, [transition | current])
       end

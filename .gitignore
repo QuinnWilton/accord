@@ -25,3 +25,6 @@ accord-*.tar
 # Dialyzer PLT files.
 /priv/plts/
 
+# Synthesized protocols (ephemeral until reviewed and promoted to lib/).
+/protocols/
+

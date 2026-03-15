@@ -50,6 +50,32 @@ defmodule Accord.ProtocolTest do
     end
   end
 
+  defmodule CastGotoProtocol do
+    use Accord.Protocol
+
+    initial :idle
+
+    state :idle do
+      on :start, reply: :ok, goto: :running
+    end
+
+    state :running do
+      cast(:pause, goto: :paused)
+      on :stop, reply: :stopped, goto: :done
+    end
+
+    state :paused do
+      cast(:resume, goto: :running)
+      on :stop, reply: :stopped, goto: :done
+    end
+
+    state :done, terminal: true
+
+    anystate do
+      cast :heartbeat
+    end
+  end
+
   defmodule MultiStateProtocol do
     use Accord.Protocol
 
@@ -334,6 +360,61 @@ defmodule Accord.ProtocolTest do
       assert heartbeat.kind == :cast
       assert heartbeat.message_pattern == :heartbeat
       assert heartbeat.branches == []
+    end
+  end
+
+  describe "__ir__/0 — cast with goto" do
+    test "cast-with-goto produces :cast transition with a branch" do
+      ir = CastGotoProtocol.__ir__()
+      [pause, _stop] = ir.states[:running].transitions
+
+      assert pause.kind == :cast
+      assert pause.message_pattern == :pause
+      assert [%Branch{reply_type: nil, next_state: :paused}] = pause.branches
+    end
+
+    test "cast-with-goto branch has span" do
+      ir = CastGotoProtocol.__ir__()
+      [pause, _] = ir.states[:running].transitions
+      [branch] = pause.branches
+      assert branch.span != nil
+    end
+
+    test "cast-without-goto in state block keeps empty branches" do
+      ir = CastGotoProtocol.__ir__()
+      [heartbeat] = ir.anystate
+
+      assert heartbeat.kind == :cast
+      assert heartbeat.branches == []
+    end
+
+    test "cast-with-goto target is validated by ValidateStructure (E002)" do
+      assert_raise CompileError, ~r/E002.*undefined state reference/, fn ->
+        defmodule CastGotoBadTarget do
+          use Accord.Protocol
+
+          initial :ready
+
+          state :ready do
+            cast(:go, goto: :nonexistent)
+          end
+        end
+      end
+    end
+
+    test "anystate cast with goto: raises CompileError" do
+      assert_raise CompileError, ~r/anystate casts cannot specify goto:/, fn ->
+        defmodule CastGotoAnystateBad do
+          use Accord.Protocol
+
+          initial :idle
+          state :idle, terminal: true
+
+          anystate do
+            cast(:oops, goto: :idle)
+          end
+        end
+      end
     end
   end
 

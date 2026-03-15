@@ -46,7 +46,10 @@ defmodule Accord.MixProject do
       {:assert_boundary, "~> 0.1.0", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.35", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.35", only: :dev, runtime: false},
+
+      # Optional: richer fact extraction for protocol synthesis.
+      {:argus, path: "../argus", optional: true}
     ]
   end
 
